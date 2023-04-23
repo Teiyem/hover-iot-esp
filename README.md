@@ -14,7 +14,7 @@ Hover Esp is designed to provide a highly customizable solution for building IoT
 Hover Esp was developed by Thabang Mmakgatla.
 
 ## Acknowledgments
-Special thanks to the developers of the ESP-IDF framework.
-
+* Special thanks to the developers of the ESP-IDF framework.
+* Special thanks to [Ruslan V. Uss](https://github.com/UncleRus) for providing the esp-idf-lib.
 ## License
 Hover Esp is licensed under the MIT license. See the LICENSE file for details.
