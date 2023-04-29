@@ -13,8 +13,8 @@
 class iot_security
 {
 public:
-    char *encrypt(const char *data, const size_t len);
-    char *decrypt(const char *data, const size_t len);
+    char *encrypt(encryption_params_t *params);
+    char *decrypt(encryption_params_t *params);
 
 private:
     static constexpr const size_t block_size = 16;     /** The cipher block size. */

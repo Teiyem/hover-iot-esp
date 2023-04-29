@@ -9,13 +9,12 @@ extern const uint8_t crypt_key_end[] asm("_binary_crypt_key_end");
 /**
  * Decrypts the given encrypted data.
  *
- * @param data The encrypted data to be decrypted.
- * @param len The length of the encrypted data.
+ * @param params Pointer to an encryption_params_t struct containing the plain text.
  * @return A pointer to the decrypted data on success, or a nullptr if an error occurred.
  */
-char *iot_security::encrypt(const char *data, const size_t len)
+char *iot_security::encrypt(encryption_params_t *params)
 {
-    if (check_string_validity(data) != ESP_OK)
+    if (check_string_validity(params->input) != ESP_OK)
     {
         return nullptr;
     }
@@ -27,11 +26,11 @@ char *iot_security::encrypt(const char *data, const size_t len)
              iv[0], iv[1], iv[2], iv[3], iv[4], iv[5], iv[6], iv[7], iv[8], iv[9], iv[10], iv[11], iv[12], iv[13],
              iv[14], iv[15]);
 
-    size_t pad_len = pad_length(len);
+    size_t pad_len = pad_length(params->len);
 
-    ESP_LOGI(tag, "%s -> Input data length -> %d, added padding length of -> %d", __func__, len, pad_len - len);
+    ESP_LOGI(tag, "%s -> Input data length -> %d, added padding length of -> %d", __func__, params->len, pad_len - params->len);
 
-    if (pad_len == len)
+    if (pad_len == params->len)
     {
         pad_len += block_size;
     }
@@ -52,7 +51,7 @@ char *iot_security::encrypt(const char *data, const size_t len)
 
     size_t output_len = 0;
 
-    int mbedtls_ret = cipher_cbc_crypt(&ctx, iv, reinterpret_cast<const uint8_t *>(data), len, output, &output_len);
+    int mbedtls_ret = cipher_cbc_crypt(&ctx, iv, reinterpret_cast<const uint8_t *>(params->input), params->len, output, &output_len);
 
     if (mbedtls_ret)
     {
@@ -116,13 +115,12 @@ char *iot_security::encrypt(const char *data, const size_t len)
 /**
  * Decrypts the given encrypted data.
  *
- * @param data The encrypted data to be decrypted.
- * @param len The length of the encrypted data.
+ * @param params Pointer to an encryption_params_t struct containing the encrypted data.
  * @return A pointer to the decrypted data on success, or a nullptr if an error occurred.
  */
-char *iot_security::decrypt(const char *data, const size_t len)
+char *iot_security::decrypt(encryption_params_t *params)
 {
-    if (check_string_validity(data) != ESP_OK)
+    if (check_string_validity(params->input) != ESP_OK)
     {
         return nullptr;
     }
@@ -130,13 +128,13 @@ char *iot_security::decrypt(const char *data, const size_t len)
     uint8_t *encoded_iv = nullptr;
     uint8_t *encoded_encrypted_data = nullptr;
 
-    esp_err_t split_ret = split_with_delimiter(data, delimiter, reinterpret_cast<char **>(&encoded_iv),
+    esp_err_t split_ret = split_with_delimiter(params->input, delimiter, reinterpret_cast<char **>(&encoded_iv),
                                                reinterpret_cast<char **>(&encoded_encrypted_data));
 
     if (split_ret != ESP_OK)
     {
         ESP_LOGE(tag, "%s -> Failed to extract iv and encrypted data, data could be invalid -> %s",
-                 __func__, data);
+                 __func__, params->input);
         return nullptr;
     }
 
