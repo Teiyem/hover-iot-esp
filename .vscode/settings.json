@@ -15,7 +15,8 @@
     "idf.toolsPathWin": "C:\\esp\\tools",
     "cSpell.words": [
         "drbg",
-        "unpad"
+        "espressif",
+        "LOGD",
     ],
     "files.associations": {
         "array": "cpp",
@@ -81,6 +82,10 @@
         "streambuf": "cpp",
         "thread": "cpp",
         "typeinfo": "cpp",
-        "*.ipp": "cpp"
+        "*.ipp": "cpp",
+        "iot_switch.h": "c",
+        "task.h": "c",
+        "freertos.h": "c",
+        "cipher.h": "c"
     }
 }
