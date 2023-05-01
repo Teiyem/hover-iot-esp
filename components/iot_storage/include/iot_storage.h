@@ -4,8 +4,7 @@
 #include "iot_util.h"
 
 /**
- * A class that provides methods for reading and writing data to non-volatile storage
- * using the Non-Volatile Storage (NVS) API.
+ * A class that provides methods for reading and writing data to non-volatile storage.
  */
 class iot_storage
 {

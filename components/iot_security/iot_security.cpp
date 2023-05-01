@@ -9,8 +9,9 @@ extern const uint8_t crypt_key_end[] asm("_binary_crypt_key_end");
 /**
  * Decrypts the given encrypted data.
  *
- * @param params Pointer to an encryption_params_t struct containing the plain text.
- * @return A pointer to the decrypted data on success, or a nullptr if an error occurred.
+ * @param[in] params Pointer to an encryption_params_t struct containing the plain text.
+ * @return A pointer to the encrypted data on success, or a nullptr if an error occurred.
+ * @note Ensure to free the encrypted data after usage.
  */
 char *iot_security::encrypt(encryption_params_t *params)
 {
@@ -32,7 +33,7 @@ char *iot_security::encrypt(encryption_params_t *params)
 
     if (pad_len == params->len)
     {
-        pad_len += block_size;
+        pad_len += block_size; // in order to avoid a buffer overflow.
     }
 
     uint8_t *output = static_cast<uint8_t *>(allocate_mem(pad_len));
@@ -115,8 +116,9 @@ char *iot_security::encrypt(encryption_params_t *params)
 /**
  * Decrypts the given encrypted data.
  *
- * @param params Pointer to an encryption_params_t struct containing the encrypted data.
+ * @param[in] params Pointer to an encryption_params_t struct containing the encrypted data.
  * @return A pointer to the decrypted data on success, or a nullptr if an error occurred.
+ * @note Ensure to free the decrypted data after usage.
  */
 char *iot_security::decrypt(encryption_params_t *params)
 {
@@ -225,8 +227,8 @@ char *iot_security::decrypt(encryption_params_t *params)
 
 /**
  * Initializes the AES cipher context with a 256-bit key and the specified operation mode (encrypt or decrypt).
- * @param ctx The AES cipher context to be initialized.
- * @param operation The operation mode (encrypt or decrypt).
+ * @param[in] ctx The AES cipher context to be initialized.
+ * @param[in] operation The operation mode (encrypt or decrypt).
  * @return ESP_OK on success, ESP_FAIL on failure.
  */
 esp_err_t iot_security::cipher_init(mbedtls_cipher_context_t *ctx, const mbedtls_operation_t operation)
@@ -263,12 +265,12 @@ esp_err_t iot_security::cipher_init(mbedtls_cipher_context_t *ctx, const mbedtls
 /**
  * Encrypts or decrypts data using AES-CBC using the given cipher context and input data, and returns the result in the output buffer.
  *
- * @param ctx A pointer to the mbedtls aes context.
- * @param iv The initialization vector used in CBC mode.
- * @param input The input buffer holding the data to be encrypted or decrypted.
- * @param input_len The length of the input buffer.
- * @param output The output buffer where the encrypted or decrypted data will be written.
- * @param output_len The length of the output buffer.
+ * @param[in] ctx A pointer to the mbedtls aes context.
+ * @param[in] iv The initialization vector used in CBC mode.
+ * @param[in] input The input buffer holding the data to be encrypted or decrypted.
+ * @param[in] input_len The length of the input buffer.
+ * @param[out] output The output buffer where the encrypted or decrypted data will be written.
+ * @param[out] output_len The length of the output buffer.
  * @return 0 on success, or an error code if an error occurred.
  */
 int iot_security::cipher_cbc_crypt(mbedtls_cipher_context_t *ctx, uint8_t *iv, const uint8_t *input, size_t input_len, uint8_t *output, unsigned int *output_len)
@@ -278,9 +280,9 @@ int iot_security::cipher_cbc_crypt(mbedtls_cipher_context_t *ctx, uint8_t *iv, c
 
 /**
  * Encodes the given data to base64.
- * @param data The data buffer to be encoded.
- * @param data_len The length of the data buffer.
- * @param base64_len The length of the base64-encoded data buffer.
+ * @param[in] data The data buffer to be encoded.
+ * @param[in] data_len The length of the data buffer.
+ * @param[in] base64_len The length of the base64-encoded data buffer.
  * @return A pointer to the base64-encoded data buffer on success, nullptr on failure.
  */
 uint8_t *iot_security::encode_to_base64(const uint8_t *data, const size_t data_len, const size_t base64_len)
@@ -312,9 +314,9 @@ uint8_t *iot_security::encode_to_base64(const uint8_t *data, const size_t data_l
 
 /**
  * Decodes the given data to base64.
- * @param data The data buffer to be decoded.
- * @param data_len The length of the data buffer.
- * @param decoded_len The number of bytes decoded.
+ * @param[in] data The data buffer to be decoded.
+ * @param[in] data_len The length of the data buffer.
+ * @param[out] decoded_len The number of bytes decoded.
  * @return A pointer to the decoded data buffer on success, nullptr on failure.
  */
 uint8_t *iot_security::decode_from_base64(const uint8_t *data, const size_t data_len, size_t *decoded_len)
@@ -376,8 +378,8 @@ uint8_t *iot_security::decode_from_base64(const uint8_t *data, const size_t data
 /**
  * Frees memory allocated for a buffer and a cipher context and returns a null pointer.
  *
- * @param buffer A pointer to a buffer allocated with malloc.
- * @param ctx A pointer to the mbedtls cipher context.
+ * @param[in] buffer A pointer to a buffer allocated with malloc.
+ * @param[in] ctx A pointer to the mbedtls cipher context.
  * @return A null pointer.
  */
 char *iot_security::err_result(uint8_t *buffer, mbedtls_cipher_context_t *ctx)
@@ -393,7 +395,7 @@ char *iot_security::err_result(uint8_t *buffer, mbedtls_cipher_context_t *ctx)
 /**
  * Frees the given cipher context.
  *
- * @param ctx A pointer to the mbedtls cipher context.
+ * @param[in] ctx A pointer to the mbedtls cipher context.
  */
 void iot_security::cipher_deinit(mbedtls_cipher_context_t *ctx)
 {
@@ -404,7 +406,7 @@ void iot_security::cipher_deinit(mbedtls_cipher_context_t *ctx)
 /**
  * Aligns the given length to a multiple of 4.
  *
- * @param len The length to align.
+ * @param[in] len The length to align.
  * @return The aligned length.
  */
 constexpr size_t iot_security::base64_align_len(const size_t len)
@@ -415,7 +417,7 @@ constexpr size_t iot_security::base64_align_len(const size_t len)
 /**
  * Calculates the length of the base64-encoded string for the given input length.
  *
- * @param len The number of bytes to be encoded.
+ * @param[in] len The number of bytes to be encoded.
  * @return The length of the resulting base64-encoded string.
  */
 constexpr size_t iot_security::calc_base64_enc_length(const size_t len)
@@ -426,7 +428,7 @@ constexpr size_t iot_security::calc_base64_enc_length(const size_t len)
 /**
  * Calculates the maximum length of the decoded base64 string for the given input length.
  *
- * @param len The length of the input.
+ * @param[in] len The length of the input.
  * @return The maximum length of the decoded base64 string.
  */
 constexpr size_t iot_security::calc_base64_dec_length(const size_t len)
@@ -437,7 +439,7 @@ constexpr size_t iot_security::calc_base64_dec_length(const size_t len)
 /**
  * Calculates the number of padding bytes.
  *
- * @param len The original length of the data buffer.
+ * @param[in] len The original length of the data buffer.
  * @return The padding length of the data buffer.
  */
 constexpr size_t iot_security::calc_pad_length(const size_t len)
@@ -448,7 +450,7 @@ constexpr size_t iot_security::calc_pad_length(const size_t len)
 /**
  * Calculates the total length required for padding the input length to the next multiple of the block size.
  *
- * @param len The input length.
+ * @param[in] len The input length.
  * @return The padded length if the.
  */
 constexpr size_t iot_security::pad_length(const size_t len)

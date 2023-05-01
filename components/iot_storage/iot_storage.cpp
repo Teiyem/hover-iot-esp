@@ -5,7 +5,7 @@ nvs_handle iot_storage::_handle = 0;
 
 /**
  * Initialises a new instance of the iot_storage class.
- * @param namespace_name A pointer to a string containing the name of the non-volatile storage namespace to be opened.
+ * @param[in] namespace_name A pointer to a string containing the name of the non-volatile storage namespace to be opened.
  */
 iot_storage::iot_storage(const char *namespace_name)
 {
@@ -42,9 +42,9 @@ iot_storage::~iot_storage(void)
 /**
  * Reads a blob of data from non-volatile storage.
  *
- * @param key A pointer to a string containing the key for the data to be read.
- * @param buffer A pointer to the buffer where the data will be stored.
- * @param len The maximum length of the data to be written.
+ * @param[in] key A pointer to a string containing the key for the data to be read.
+ * @param[in] buffer A pointer to the buffer where the data will be stored.
+ * @param[in] len The maximum length of the data to be written.
  * @return An esp_err_t value indicating the success or failure of the read operation.
  */
 esp_err_t iot_storage::write(const char *key, const void *data, size_t len)
@@ -74,9 +74,9 @@ esp_err_t iot_storage::write(const char *key, const void *data, size_t len)
 /**
  * Reads a blob of data from non-volatile storage.
  *
- * @param key A pointer to a string containing the key for the data to be read.
- * @param buffer A pointer to the buffer where the data will be stored.
- * @param len The maximum length of the data to be read.
+ * @param[in] key A pointer to a string containing the key for the data to be read.
+ * @param[out] buffer A pointer to the buffer where the data will be stored.
+ * @param[in] len The maximum length of the data to be read.
  * @return An esp_err_t value indicating the success or failure of the read operation.
  */
 esp_err_t iot_storage::read(const char *key, void *buffer, size_t len)
