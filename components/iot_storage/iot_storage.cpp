@@ -9,6 +9,8 @@ nvs_handle iot_storage::_handle = 0;
  */
 iot_storage::iot_storage(const char *namespace_name)
 {
+    ESP_LOGE(tag, "%s -> Opening nvs for namespace", __func__);
+
     if (check_string_validity(namespace_name) != ESP_OK)
     {
         failed_to_open = true;
@@ -43,7 +45,7 @@ iot_storage::~iot_storage(void)
  * Reads a blob of data from non-volatile storage.
  *
  * @param[in] key A pointer to a string containing the key for the data to be read.
- * @param[in] buffer A pointer to the buffer where the data will be stored.
+ * @param[in] input A pointer to the input buffer where the data will be stored.
  * @param[in] len The maximum length of the data to be written.
  * @return An esp_err_t value indicating the success or failure of the read operation.
  */
@@ -75,7 +77,7 @@ esp_err_t iot_storage::write(const char *key, const void *data, size_t len)
  * Reads a blob of data from non-volatile storage.
  *
  * @param[in] key A pointer to a string containing the key for the data to be read.
- * @param[out] buffer A pointer to the buffer where the data will be stored.
+ * @param[out] buffer A pointer to the input buffer where the data will be stored.
  * @param[in] len The maximum length of the data to be read.
  * @return An esp_err_t value indicating the success or failure of the read operation.
  */

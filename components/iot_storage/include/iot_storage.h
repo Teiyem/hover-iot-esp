@@ -9,10 +9,10 @@
 class iot_storage
 {
 public:
-    iot_storage(const char *namespace_name);
+    iot_storage(const char *namespace_name = "nvs");
     ~iot_storage(void);
-    esp_err_t write(const char *key, const void *data, size_t len);
-    esp_err_t read(const char *key, void *buffer, size_t len);
+    esp_err_t write(const char *key, const void *input, size_t len);
+    esp_err_t read(const char *key, void *input, size_t len);
 
 private:
     static constexpr const char *tag = "iot_storage"; /**< A constant used to identify the source of the log message of this class. */
