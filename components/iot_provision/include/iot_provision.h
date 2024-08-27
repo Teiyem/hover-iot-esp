@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include "esp_wifi.h"
 #include "iot_common.h"
 #include "iot_provision_defs.h"
