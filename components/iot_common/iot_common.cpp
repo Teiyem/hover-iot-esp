@@ -1,25 +1,7 @@
+#include <sstream>
 #include "iot_common.h"
 
-/**
- * Allocates a block of memory of the specified size using malloc.
- *
- * @param[in] size The size of the memory block to allocate.
- * @return A pointer to the allocated memory block, or nullptr if the allocation fails.
- * @note Ensure to free the allocated memory after usage.
- */
-void *iot_allocate_mem(size_t size)
-{
-    ESP_LOGI(TAG, "%s -> Allocating memory for buffer with size -> %d", __func__, size);
-
-    void *ptr = malloc(size);
-
-    if (ptr == nullptr)
-        ESP_LOGE(TAG, "%s -> Failed to allocate memory for buffer with size -> %d", __func__, size);
-    else
-        iot_zero_mem(ptr, size);
-
-    return ptr;
-}
+static constexpr const char *TAG = "IotCommon"; /**< A constant used to identify the source of the log message of this. */
 
 /**
  * Zeros out a block of memory.
@@ -43,7 +25,7 @@ void iot_zero_mem(void *ptr, size_t size)
  */
 char *iot_cat_with_delimiter(const char *str1, const char *str2, const char *delimiter)
 {
-    char *result = static_cast<char *>(iot_allocate_mem(strlen(str1) + strlen(delimiter) + strlen(str2) + 1));
+    char *result = iot_allocate_mem<char>(strlen(str1) + strlen(delimiter) + strlen(str2) + 1);
 
     if (result == nullptr)
         return result;
@@ -67,7 +49,7 @@ char *iot_cat_with_delimiter(const char *str1, const char *str2, const char *del
  */
 esp_err_t iot_split_with_delimiter(const char *str, const char *delimiter, char **str1, char **str2)
 {
-    int delimiter_len = strlen(delimiter);
+    size_t delimiter_len = strlen(delimiter);
 
     char *pos = strstr(str, delimiter);
 
@@ -75,11 +57,11 @@ esp_err_t iot_split_with_delimiter(const char *str, const char *delimiter, char 
 
     if (pos == nullptr)
     {
-        ESP_LOGE(TAG, "%s -> Failed to locate delimiter", __func__);
+        ESP_LOGE(TAG, "%s: Failed to locate delimiter", __func__);
         return ret;
     }
 
-    *str1 = static_cast<char *>(iot_allocate_mem(pos - str + 1));
+    *str1 = iot_allocate_mem<char>(pos - str + 1);
 
     if (*str1 == nullptr)
     {
@@ -89,7 +71,7 @@ esp_err_t iot_split_with_delimiter(const char *str, const char *delimiter, char 
     strncpy(*str1, str, pos - str);
     (*str1)[pos - str] = '\0';
 
-    *str2 = static_cast<char *>(iot_allocate_mem(strlen(pos + delimiter_len) + 1));
+    *str2 = iot_allocate_mem<char>(strlen(pos + delimiter_len) + 1);
 
     if (*str2 == nullptr)
     {
@@ -103,20 +85,40 @@ esp_err_t iot_split_with_delimiter(const char *str, const char *delimiter, char 
 }
 
 /**
+ * Masks the entire string with an asterisks ('*').
+ * @param[in] str The string to be masked.
+ * @return The masked string or null if the string is invalid.
+ * @note Ensure to free the masked string if it's not null.
+ */
+char *iot_mask_str(const char *str)
+{
+    if(!iot_valid_str(str))
+        return nullptr;
+
+    size_t length = strlen(str);
+    char *mask = iot_allocate_mem<char>(length + 1);
+
+    memset(mask, '*', length);
+    mask[length] = '\0';
+
+    return mask;
+}
+
+/**
  * Checks if a given string is valid.
  *
- * @param str The string to check.
+ * @param[in] str The string to check.
  * @return ESP_OK` if the string is valid, otherwise ESP_FAIL.
  */
-esp_err_t iot_verify_string(const char *str)
+bool iot_valid_str(const char *str)
 {
     if (str == nullptr || str[0] == '\0' || strlen(str) == 0)
     {
-        ESP_LOGE(TAG, "%s -> String is invalid", __func__);
-        return ESP_FAIL;
+        ESP_LOGE(TAG, "%s: String is invalid", __func__);
+        return false;
     }
 
-    return ESP_OK;
+    return true;
 }
 
 /**
@@ -147,40 +149,35 @@ const char *iot_now_str(void)
  */
 uint64_t iot_convert_time_to_ms(const char *time)
 {
-    uint64_t ret = 0;
+    uint64_t result = 0;
+    std::stringstream ss(time);
+    std::string token;
 
-    char *buf;
-    char *ptr = strdup(time);
-    char *token = strtok_r(ptr, " ", &buf);
-    while (token != nullptr)
-    {
-        int len = strlen(token);
+    while (ss >> token) {
+        size_t len = token.length();
 
-        if (len > 1)
-        {
+        if (len > 1) {
             char unit = token[len - 1];
-            int value = atoi(token);
-            switch (unit)
-            {
-            case 'h':
-                ret += value * 60 * 60 * 1000000;
-                break;
-            case 'm':
-                ret += value * 60 * 1000000;
-                break;
-            case 's':
-                ret += value * 1000000;
-                break;
-            default:
-                ESP_LOGE(TAG, "%s -> Invalid time format: %s", __func__, time);
-                return 0;
+            int value = std::stoi(token.substr(0, len - 1));
+
+            switch (unit) {
+                case 'h':
+                    result += static_cast<uint64_t>(value) * 60 * 60 * 1000;
+                    break;
+                case 'm':
+                    result += static_cast<uint64_t>(value) * 60 * 1000;
+                    break;
+                case 's':
+                    result += static_cast<uint64_t>(value) * 1000;
+                    break;
+                default:
+                    ESP_LOGE(TAG, "%s: Invalid time [format: %s]", __func__, time);
+                    return 0;
             }
         }
-        token = strtok_r(nullptr, " ", &buf);
     }
-    free(ptr);
 
-    return ret;
+    return result;
 }
 
 /**
@@ -189,4 +186,22 @@ uint64_t iot_convert_time_to_ms(const char *time)
 unsigned long iot_millis(void)
 {
     return (unsigned long)(esp_timer_get_time() / 1000ULL);
+}
+
+void iot_hex_to_bytes(const char* hex_str, char* byte_array, size_t byte_array_size) {
+    for (size_t i = 0; i < byte_array_size; i++) {
+        sscanf(&hex_str[i * 2], "%2hhx", &byte_array[i]);
+    }
+}
+
+/**
+ * Casts a string literal(const char *) to char*
+ *
+ * @param literal A pointer to a constant character string.
+ * @return char*  A pointer to the same memory location as literal.
+ * @warning Don't modify the value a const is a const.
+ */
+char *iot_char_s(const char *literal)
+{
+    return const_cast<char *>(literal);
 }

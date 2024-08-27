@@ -1,0 +1,45 @@
+menu "Hover Application"
+
+    config IOT_HOVER_MQTT_ENABLED
+        bool "Enable Mqtt Component"
+        default y
+        select MQTT_PROTOCOL_311
+        help
+            Enable mqtt support.
+
+    if IOT_HOVER_MQTT_ENABLED
+
+    config MQTT_PROTOCOL_311
+        bool "Overrides enabling the esp-idf mqtt component"
+        default y
+        help
+           Don't set this to false if hover mqtt is enabled.
+    endif
+
+    if !IOT_HOVER_MQTT_ENABLED
+
+    config MQTT_PROTOCOL_311
+        bool "Overrides disabling the esp-idf mqtt component"
+        default n
+        help
+           Don't set this to true if hover the mqtt is disabled.
+    endif
+
+    choice IOT_HOVER_ENV_OPTION
+        prompt "Environment options"
+        default IOT_HOVER_ENV_DEV
+        help
+            The current running environment of the project
+
+        config IOT_HOVER_ENV_DEV
+           bool "Dev environment"
+           help
+              Currently running in a dev environment
+
+        config IOT_HOVER_ENV_PROD
+           bool "Production environment"
+           help
+               Currently running in a production environment
+
+    endchoice
+endmenu

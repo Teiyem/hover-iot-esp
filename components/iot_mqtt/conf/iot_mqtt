@@ -1,0 +1,5 @@
+{
+  "mqtt_url": "mqtt://localhost:8400",
+  "username": "username",
+  "password": "password"
+}

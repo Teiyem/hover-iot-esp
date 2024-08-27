@@ -1,41 +1,48 @@
 #include "iot_storage.h"
 
-/** The handle for the non-volatile storage namespace. */
-nvs_handle iot_storage::_handle{};
-
 /**
- * Initialises a new instance of the iot_storage class.
- * @param[in] name A pointer to a string containing the name of the non-volatile storage namespace to be opened.
+ * Initialises a new instance of the IotStorage class.
+ *
+ * @param[in] partition A pointer to the name of partition to use.
+ * @param[in] name_space A pointer of the namespace to yse.
  */
-iot_storage::iot_storage(const char *name)
+IotStorage::IotStorage(const char *partition, const char *name_space)
 {
-    ESP_LOGI(tag, "%s -> Opening nvs for namespace %s ->", __func__, name);
+    ESP_LOGI(TAG, "%s: Opening [partition: %s, namespace: %s]", __func__, partition, name_space);
 
-    if (iot_verify_string(name) != ESP_OK)
-    {
+    if (!iot_valid_str(name_space) || !iot_valid_str(partition)) {
         failed_to_open = true;
         return;
     }
 
-    if (_handle == 0)
-    {
-        // esp_err_t err = nvs_open_from_partition(part_name, name_space, NVS_READONLY, &handle);
-        esp_err_t ret = nvs_open(name, NVS_READWRITE, &_handle);
+    esp_err_t ret = nvs_flash_init_partition(partition);
 
-        if (ret != ESP_OK)
-        {
-            ESP_LOGE(tag, "%s ->  Failed to open nvs for namespace %s -> , reason %s", __func__, name, esp_err_to_name(ret));
-            failed_to_open = true;
-            return;
-        }
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
+
+    ESP_ERROR_CHECK(ret);
+
+    ret = nvs_open_from_partition(partition, name_space, NVS_READWRITE, &_handle);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to open [partition: %s ,namespace: %s, reason: %s]", __func__, partition, name_space,
+                 esp_err_to_name(ret));
+        failed_to_open = true;
+        return;
+    }
+
+    if (CONFIG_IOT_HOVER_ENV_DEV)
+        print_stats(partition, name_space);
 }
 
 /**
- * Destructor for iot_storage class.
+ * Destructor for IotStorage class.
  */
-iot_storage::~iot_storage(void)
+IotStorage::~IotStorage(void)
 {
+    ESP_LOGI(TAG, "%s: ", __func__);
     if (failed_to_open)
         return;
 
@@ -45,29 +52,25 @@ iot_storage::~iot_storage(void)
 /**
  * Writes a data to the non-volatile storage.
  *
- * @param[in] key The key to use when writing the data.
- * @param[in] input A pointer to the data to write.
- * @param[in] len The length of the data to write.
- * @return Returns ESP_OK on success, otherwise an error code
+ * @param[in] A pointer to the write parameters.
+ * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t iot_storage::write(const char *key, const void *input, size_t len)
+esp_err_t IotStorage::write(const iot_nvs_write_params_t *params)
 {
     if (failed_to_open)
         return ESP_ERR_INVALID_STATE;
 
-    esp_err_t ret = nvs_set_blob(_handle, key, input, len);
+    esp_err_t ret = nvs_set_blob(_handle, params->key, params->data, params->len);
 
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(tag, "%s -> Failed to set blob to nvs, reason -> %s", __func__, esp_err_to_name(ret));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to set blob to nvs, [reason: %s]", __func__, esp_err_to_name(ret));
         return ret;
     }
 
     ret = nvs_commit(_handle);
 
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(tag, "%s -> Failed to commit to nvs, reason -> %s", __func__, esp_err_to_name(ret));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to commit to nvs, [reason: %s]", __func__, esp_err_to_name(ret));
         return ret;
     }
 
@@ -75,65 +78,77 @@ esp_err_t iot_storage::write(const char *key, const void *input, size_t len)
 }
 
 /**
- * Reads a data from non-volatile storage.
+ * Reads data from the non-volatile storage.
  *
  * @param[in] key The key to use when reading the data.
- * @param[out] buf A pointer to the input buffer where the data will be stored.
- * @param[in] len The length of the data to be read.
- * @return Returns ESP_OK on success, otherwise an error code
+ * @param[out] buf A pointer to a buffer to store the data.
+ * @param[in] len The size of the buffer.
+ * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t iot_storage::read(const char *key, void *buf, size_t len)
+esp_err_t IotStorage::read(const char *key, void *buf, size_t len)
 {
     if (failed_to_open)
         return ESP_ERR_INVALID_STATE;
+
+    if (len == 0) {
+        ESP_LOGE(TAG, "%s:  Cannot -> %d", __func__, len);
+    }
 
     return nvs_get_blob(_handle, key, buf, &len);
 }
 
 /**
- * Verifies the data stored in non-volatile storage with the input data.
+ * Reads data from non-volatile storage.
  *
- * @param[in] key The key to use when verifying the data.
- * @param[in] input A pointer to the data to verify.
- * @param[in] len The maximum length of the data to be read.
- * @return Returns ESP_OK on success, otherwise an error code
+ * @param[in] key The key to use when reading the data.
+ * @param[out] buf A pointer to a buffer to store the data.
+ * @param[out] len The size of the buffer and the size of the data read.
+ * @param[in] type The data type to read.
+ * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t iot_storage::verify(const char *key, const void *input, size_t len)
+esp_err_t IotStorage::read(const char *key, void **buf, size_t &len, iot_nvs_val_type_e type)
 {
     if (failed_to_open)
         return ESP_ERR_INVALID_STATE;
 
-    void *buf = iot_allocate_mem(len);
+    esp_err_t ret = ESP_OK;
 
-    if (buf == nullptr)
-        return ESP_ERR_NO_MEM;
+    // Get the size first
+    if (type == TYPE_STR)
+        ret = nvs_get_str(_handle, key, nullptr, &len);
+    else if (type == TYPE_BLOB)
+        ret = nvs_get_blob(_handle, key, nullptr, &len);
 
-    size_t buf_len = len;
-
-    esp_err_t ret = read(key, buf, buf_len);
-
-    if (ret != ESP_OK || buf_len != len)
-    {
-        free(buf);
-        return ESP_FAIL;
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s:  Failed get the data size for [key: %s, reason: %s]", __func__, key, esp_err_to_name(ret));
+        return ret;
     }
 
-    if (memcmp(input, buf, len) != 0)
-    {
-        free(buf);
-        return ESP_FAIL;
+    ESP_LOGI(TAG, "%s:  Got string with size -> %d", __func__, len);
+
+    *buf = iot_allocate_mem<uint8_t>(len);
+
+    if (type == TYPE_STR)
+        ret = nvs_get_str(_handle, key, reinterpret_cast<char *>(*buf), &len);
+    else if (type == TYPE_BLOB)
+        ret = nvs_get_blob(_handle, key, reinterpret_cast<char *>(*buf), &len);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s:  Failed get the data for [key: %s, reason: %s]", __func__, key, esp_err_to_name(ret));
+        free(*buf);
+        *buf = nullptr;
     }
 
-    free(buf);
-    return ESP_OK;
+    return ret;
 }
 
 /**
  * Erases a key or all keys in the non-volatile storage.
+ *
  * @param[in] key The key to erase. Default is nullptr which will erase all keys.
- * @return Returns ESP_OK on success, otherwise an error code
+ * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t iot_storage::erase(const char *key)
+esp_err_t IotStorage::erase(const char *key)
 {
     if (failed_to_open)
         return ESP_ERR_INVALID_STATE;
@@ -145,19 +160,57 @@ esp_err_t iot_storage::erase(const char *key)
     else
         ret = nvs_erase_all(_handle);
 
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(tag, "%s -> Failed to erase key(s) from nvs, reason -> %s", __func__, esp_err_to_name(ret));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to erase key(s) from nvs, reason: %s]", __func__, esp_err_to_name(ret));
         return ret;
     }
 
     ret = nvs_commit(_handle);
 
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(tag, "%s -> Failed to commit to nvs, reason -> %s", __func__, esp_err_to_name(ret));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to commit to nvs, [reason: %s]", __func__, esp_err_to_name(ret));
         return ret;
     }
 
     return ret;
+}
+
+/**
+ * Prints the non-volatile storage stats.
+ *
+ * @param[in] partition  The partition name to print the stats for.
+ * @param[in] name_space The namespace to print stats for.
+ */
+void IotStorage::print_stats(const char *partition, const char *name_space)
+{
+    ESP_LOGI(TAG, "%s: Partition Name -> %s", __func__, partition);
+
+    nvs_stats_t nvs_stats;
+    esp_err_t ret = nvs_get_stats(partition, &nvs_stats);
+
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "%s: Partition [name: %s]", __func__, partition);
+        ESP_LOGI(TAG, "%s: Used [entries: %d]", __func__, nvs_stats.used_entries);
+        ESP_LOGI(TAG, "%s: Free [entries: %d]", __func__, nvs_stats.free_entries);
+        ESP_LOGI(TAG, "%s: Total [entries: %d]", __func__, nvs_stats.total_entries);
+        ESP_LOGI(TAG, "%s: Namespace [count: %d]", __func__, nvs_stats.namespace_count);
+    } else {
+        ESP_LOGE(TAG, "%s: Failed to get nvs stats for partition -> %s, reason -> %s", __func__, partition,
+                 esp_err_to_name(ret));
+
+    }
+
+    ESP_LOGI(TAG, "%s: Listing all the key-value pairs for [partition: %s, namespace: %s]", __func__, partition,
+             name_space);
+    nvs_iterator_t it = nullptr;
+    esp_err_t res = nvs_entry_find(partition, name_space, NVS_TYPE_ANY, &it);
+
+    while (res == ESP_OK) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+        ESP_LOGI(TAG, "%s: [key: %s, type: %d]", __func__, info.key, info.type);
+        res = nvs_entry_next(&it);
+    }
+
+    nvs_release_iterator(it);
 }

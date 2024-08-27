@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+// A message of a device structure.
+message IotDeviceInfo {
+  string uuid = 1;                            // The device's unique identifier.
+  string name = 2;                            // The device's name.
+  string type = 3;                            // The device's type.
+  repeated IotAttribute attributes = 4;       // The device's attributes associated.
+  repeated IotService services = 5;           // The device's services.
+  IotMetadata metadata = 6;                   // The device's metadata.
+}
+
+// An enum of the different types value type.
+enum IotValueType {
+  IOT_VAL_TYPE_BOOLEAN = 0;  // Boolean type (true/false).
+  IOT_VAL_TYPE_INTEGER = 1;  // Integer type (32-bit unsigned).
+  IOT_VAL_TYPE_FLOAT = 2;    // Float type (single precision).
+  IOT_VAL_TYPE_LONG = 3;     // Long type (64-bit unsigned).
+  IOT_VAL_TYPE_STRING = 4;   // String type (text).
+  IOT_VAL_TYPE_UNKNOWN = 5;  // Unknown or unsupported type.
+}
+
+// A message of a value type.
+message IotValue {
+  oneof Type {
+    bool bool_value = 1;      // A boolean value.
+    uint32 int_value = 2;     // A integer value.
+    uint64 long_value = 3;    // A long value.
+    float float_value = 4;    // A float value.
+    string string_value = 5;  // A string value.
+  }
+}
+
+// A message of the device's attribute.
+message IotAttribute {
+  string name = 1;                    // The attribute's name.
+  bool is_primary = 2;                // Whether the attribute's is primary.
+  IotValue value = 3;                 // The attribute's value.
+  map<string, IotValue> params = 5;   // The attribute's param.
+}
+
+// A message of the device's metadata.
+message IotMetadata {
+  string mac_address = 1;       // The device's mac address.
+  string model = 2;             // The device's model.
+  string firmware_version = 3;  // The device's firmware version.
+  string last_updated = 4;      // The device's firmware last update timestamp.
+}
+
+// A message of the device's available services.
+message IotService {
+  string name = 1;           // The service's name.
+  bool enabled = 2;          // Whether the service is enabled.
+  bool is_core_service = 3;  // Whether this service is a core service.
+}
+
+// A message of the data structure for a single attribute's value.
+message IotAttributeData {
+  string name = 1;    // The attribute's name.
+  IotValue value = 2; // The attribute's data.
+}
+
+// A request message for writing attributes.
+message IotAttributeWriteRequest {
+  repeated IotAttributeData attributes = 1; // A list of attributes to write.
+}
+
+// A response message for attribute read requests.
+message IotAttributeResponse {
+  repeated IotAttributeData attributes = 1; // The list of read attributes.
+}

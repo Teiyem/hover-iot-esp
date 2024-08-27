@@ -1,3 +1,4 @@
 idf_component_register(SRCS "iot_wifi.cpp"
                     INCLUDE_DIRS "include"
-                    REQUIRES "freertos" "esp_netif" "esp_event" "lwip" "esp_wifi" "esp_common")
+                    REQUIRES "esp_netif" "lwip" "esp_wifi" "iot_common" "iot_storage"
+                    PRIV_REQUIRES  "mdns")

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+/** An enum of the different types of repose status. */
+enum IotResponseStatus {
+  SUCCESS = 0;     /**< Indicates the request was successful. */
+  FAILED = 1;      /**< Indicates the request failed due to an error. */
+  REJECTED = 2;    /**< Indicates the request was rejected possibly due to invalid input or permissions. */
+  NO_MEMORY = 3;   /**< Indicates the request failed due to insufficient memory. */
+}
+
+/** A common message that represents a response from an operation. */
+message IotResponse {
+  IotResponseStatus status = 1; /**< The status of the response. */
+  string message = 2;           /**< The message providing additional details about the response. */
+}
