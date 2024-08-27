@@ -14,5 +14,5 @@ jobs:
     - name: esp-idf build
       uses: espressif/esp-idf-ci-action@v1
       with:
-        esp_idf_version: v5.0
+        esp_idf_version: latest
         path: examples/simple
