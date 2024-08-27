@@ -274,13 +274,13 @@ void IotApplication::init_sntp(char *timezone)
     setenv("TZ", timezone, 1);
     tzset();
 
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "time.google.com");
-    sntp_setservername(1, "pool.ntp.com");
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "time.google.com");
+    esp_sntp_setservername(1, "pool.ntp.com");
     sntp_set_time_sync_notification_cb(on_sntp_update);
     sntp_set_sync_interval(_clock_sync_time);
 
-    sntp_init();
+    esp_sntp_init();
 
     ESP_LOGI(TAG, "%s: Done initializing sntp", __func__);
 }
