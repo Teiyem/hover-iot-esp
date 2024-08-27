@@ -16,3 +16,4 @@ jobs:
       with:
         esp_idf_version: latest
         path: examples/simple
+        command: idf.py build
