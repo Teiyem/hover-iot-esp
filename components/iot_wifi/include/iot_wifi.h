@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include "esp_system.h"
 #include "esp_mac.h"
 #include "esp_wifi.h"
@@ -11,7 +12,6 @@
 #include "iot_storage.h"
 #include "lwip/apps/netbiosns.h"
 #include "iot_component.h"
-
 /**
  * A class for handling network related tasks.
  */
