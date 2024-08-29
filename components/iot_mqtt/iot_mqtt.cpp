@@ -44,6 +44,7 @@ esp_err_t IotMqtt::start(std::string client_id)
         ESP_LOGI(TAG, "%s: Configuring Mqtt [password: %s]", __func__, iot_mask_str(password));
     }
 
+    _mqtt_cfg.credentials.client_id = client_id.c_str();
     _mqtt_cfg.network.disable_auto_reconnect = true;
     _client = esp_mqtt_client_init(&_mqtt_cfg);
 
@@ -69,6 +70,8 @@ esp_err_t IotMqtt::start(std::string client_id)
  */
 esp_err_t IotMqtt::reconnect()
 {
+    assert(_initialized);
+
     esp_err_t ret = esp_mqtt_client_reconnect(_client);
 
     if (ret != ESP_OK) {
@@ -85,6 +88,8 @@ esp_err_t IotMqtt::reconnect()
  */
 esp_err_t IotMqtt::subscribe(iot_mqtt_subscribe_t subscribe)
 {
+    assert(_initialized);
+
     std::lock_guard<std::mutex> lock(_subscribe_mutex);
 
     std::string topic = subscribe.topic;
@@ -118,6 +123,8 @@ esp_err_t IotMqtt::subscribe(iot_mqtt_subscribe_t subscribe)
  */
 esp_err_t IotMqtt::publish(std::string topic, std::string data, size_t data_len, uint8_t qos, int *msg_id)
 {
+    assert(_initialized);
+
     *msg_id = esp_mqtt_client_publish(_client, topic.data(), data.data(), data_len, qos, 0);
 
     if (*msg_id < 0) {
@@ -147,10 +154,12 @@ void IotMqtt::on_event(void *args, esp_event_base_t base, int32_t id, void *data
         case MQTT_EVENT_CONNECTED:
             self->_connected = true;
             ESP_LOGI(TAG, "%s: Received event [id: MQTT_EVENT_CONNECTED].", __func__);
+            esp_event_post(IOT_EVENT, IOT_APP_MQTT_CONNECTED_EVENT, nullptr, 0,portMAX_DELAY);
             break;
         case MQTT_EVENT_DISCONNECTED:
             self->_connected = false;
             ESP_LOGI(TAG, "%s: Received event [id: MQTT_EVENT_DISCONNECTED].", __func__);
+            esp_event_post(IOT_EVENT, IOT_APP_MQTT_DISCONNECTED_EVENT, nullptr, 0,portMAX_DELAY);
             break;
         case MQTT_EVENT_SUBSCRIBED:
             ESP_LOGI(TAG, "%s: Received event [id: MQTT_EVENT_SUBSCRIBED, msg_id: %d].", __func__, event->msg_id);
@@ -205,11 +214,28 @@ void IotMqtt::on_data(esp_mqtt_event_handle_t evt)
 }
 
 /**
- * Check if the mqtt client is currently connected.
+ * Checks if the mqtt client is currently connected.
  *
  * @return true if connected, false otherwise.
  */
-bool IotMqtt::is_connected() const
+bool IotMqtt::connected() const
 {
     return _connected;
+}
+
+/**
+ * @brief Checks if a given topic is currently subscribed.
+ *
+ * This function checks whether the specified MQTT topic is present in the
+ * list of subscriptions. If there are no subscriptions, it returns `false`.
+ *
+ * @param topic The MQTT topic to check for subscription.
+ * @return `true` if the topic is subscribed, `false` otherwise.
+ */
+bool IotMqtt::subscribed(std::string topic) const
+{
+    if (_subscriptions.empty())
+        return false;
+
+    return _subscriptions.contains(topic);
 }

@@ -2,19 +2,19 @@
 
 #include "iot_common.h"
 
-#define IOT_WIFI_MSG_START 21 /**< The start of the iot wifi messages. Reserved 21 to 40. */
+#define IOT_WIFI_MSG_START 22 /**< The start of the iot wifi messages. Reserved 22 to 41. */
 
 /**
  * An enum for Wi-Fi messages.
  */
 typedef enum iot_wifi_message
 {
-    IOT_WIFI_MSG_STARTED = IOT_WIFI_MSG_START, /**< The wifi has started. */
-    IOT_WIFI_MSG_CONNECTED,                    /**< The wifi is connected. */
-    IOT_WIFI_MSG_DISCONNECTED,                 /**< The wifi is disconnected. */
-    IOT_WIFI_MSG_CONNECT_FAILED,               /**< The wifi connection failed. */
-    IOT_WIFI_MSG_RECONNECTING,                 /**< The wifi is reconnecting. */
-    IOT_WIFI_MSG_RECONNECTING_FAIL = 26,       /**< The wifi reconnection failed. */
+    IOT_WIFI_MSG_STARTED = IOT_WIFI_MSG_START, /**< Indicates that wifi has started. */
+    IOT_WIFI_MSG_CONNECTED,                    /**< Indicates that wifi is connected. */
+    IOT_WIFI_MSG_DISCONNECTED,                 /**< Indicates that wifi is disconnected. */
+    IOT_WIFI_MSG_CONNECT_FAILED,               /**< Indicates that wifi connection failed. */
+    IOT_WIFI_MSG_RECONNECTING,                 /**< Indicates that wifi is reconnecting. */
+    IOT_WIFI_MSG_RECONNECTING_FAIL,            /**< Indicates that wifi reconnection failed. */
 } iot_wifi_message_e;
 
 /**

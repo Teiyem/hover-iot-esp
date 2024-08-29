@@ -1,5 +1,6 @@
 #include "iot_wifi.h"
 #include "mdns.h"
+#include "iot_factory.h"
 
 #define IOT_MDNS_INSTANCE "mdns-iot-hover"
 
@@ -30,9 +31,6 @@ QueueHandle_t IotWifi::_queue_handle{};
 /** A handle to the task. */
 TaskHandle_t IotWifi::_task_handle{};
 
-/** A callback handler to call when Wi-Fi events occurs. */
-std::function<void(iot_wifi_message_e)> IotWifi::_evt_cb{};
-
 /**
  * Initialises a new instance of the IotWifi class.
  */
@@ -42,23 +40,21 @@ IotWifi::IotWifi()
 }
 
 /**
- * Destructor for IotWifi class.
+ * Destroys the IotWifi class.
  */
 IotWifi::~IotWifi()
 {
-    delete _iot_storage;
-    mdns_free();
-    netbiosns_stop();
+    if (_started) {
+        stop();
+    }
 }
 
 /**
  * Starts the component.
  */
-void IotWifi::start()
+esp_err_t IotWifi::start()
 {
     ESP_LOGI(TAG, "%s: Starting component", __func__);
-
-    assert(_evt_cb != nullptr);
 
     _queue_handle = xQueueCreate(10, sizeof(iot_wifi_message_e));
 
@@ -84,10 +80,14 @@ void IotWifi::start()
 
     read_mac();
 
-    xTaskCreatePinnedToCore(&runner, "iot_wifi_task", 4096, this, 5,
+    xTaskCreatePinnedToCore(&task, "iot_wifi_task", 4096, this, 5,
                             &_task_handle, 0);
 
+    _started = true;
+
     ESP_LOGI(TAG, "%s: Component started successfully", __func__);
+
+    return ESP_OK;
 }
 
 /**
@@ -99,13 +99,12 @@ void IotWifi::stop()
 
     mdns_free();
     netbiosns_stop();
-    vTaskDelete(_task_handle);
-    vQueueDelete(_queue_handle);
-    _queue_handle = nullptr;
-    _task_handle = nullptr;
+    iot_delete_task_queue(_task_handle, _queue_handle);
     esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &on_event);
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_event);
     delete _iot_storage;
+
+    _started = false;
 }
 
 /**
@@ -146,16 +145,6 @@ esp_err_t IotWifi::init_mdns(std::string device_name)
     netbiosns_set_name(device_name.c_str());
 
     return ret;
-}
-
-/**
- * Sets a callback function to be called when certain wifi events occur.
- *
- * @param[in] cb A pointer to the callback function to call.
- */
-void IotWifi::set_callback(std::function<void(iot_wifi_message_e)> evt_cb)
-{
-    _evt_cb = evt_cb;
 }
 
 /**
@@ -273,7 +262,6 @@ void IotWifi::reconnect()
 
         if (connect_interval == 50000) {
             _reconnect = false;
-            _reconnecting = false;
             send_to_queue(IOT_WIFI_MSG_RECONNECTING_FAIL);
             return;
         }
@@ -304,7 +292,7 @@ void IotWifi::on_event(void *args, esp_event_base_t base, int32_t id, void *data
         send_to_queue(IOT_WIFI_MSG_STARTED);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *event = static_cast<wifi_event_sta_disconnected_t *>(data);
-        ESP_LOGI(TAG, "%s: Received event [id: WIFI_EVENT_STA_DISCONNECTED evt_data:[reason: %d ]]", __func__,
+        ESP_LOGI(TAG, "%s: Received event [id: WIFI_EVENT_STA_DISCONNECTED, reason: %d]", __func__,
                  event->reason);
 
         if (event->reason == WIFI_REASON_AUTH_FAIL && _configuring)
@@ -313,11 +301,11 @@ void IotWifi::on_event(void *args, esp_event_base_t base, int32_t id, void *data
         send_to_queue(IOT_WIFI_MSG_DISCONNECTED);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *event = static_cast<ip_event_got_ip_t *>(data);
-        ESP_LOGI(TAG, "%s: Received event [id: IP_EVENT_STA_GOT_IP, evt_data:[ip_address: " IPSTR " ]]", __func__,
+        ESP_LOGI(TAG, "%s: Received event [id: IP_EVENT_STA_GOT_IP, ip_address: " IPSTR "]", __func__,
                  IP2STR(&event->ip_info.ip));
         send_to_queue(IOT_WIFI_MSG_CONNECTED);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
-        ESP_LOGI(TAG, "%s: Received event [id: IP_EVENT_STA_LOST_IP ]", __func__);
+        ESP_LOGI(TAG, "%s: Received event [id: IP_EVENT_STA_LOST_IP]", __func__);
         send_to_queue(IOT_WIFI_MSG_DISCONNECTED);
     }
 }
@@ -338,9 +326,9 @@ BaseType_t IotWifi::send_to_queue(iot_wifi_message_e msg)
  *
  * @param[in] param A pointer to the task parameter (this).
  */
-[[noreturn]] void IotWifi::runner(void *param)
+[[noreturn]] IRAM_ATTR void IotWifi::task(void *param)
 {
-    ESP_LOGI(TAG, "%s -> Task started running", __func__);
+    ESP_LOGI(TAG, "%s: Task started running", __func__);
 
     auto *self = static_cast<IotWifi *>(param);
 
@@ -360,8 +348,10 @@ BaseType_t IotWifi::send_to_queue(iot_wifi_message_e msg)
  *
  * @param[in] msg The message to process.
  */
-void IotWifi::process_message(iot_base_message_e msg)
+void IotWifi::process_message(iot_wifi_message_e msg)
 {
+    ESP_LOGI(TAG, "%s: Processing message [id: %u]", __func__, msg);
+
     switch (msg) {
         case IOT_WIFI_MSG_STARTED:
                 connect();
@@ -380,11 +370,11 @@ void IotWifi::process_message(iot_base_message_e msg)
             break;
 
         case IOT_WIFI_MSG_RECONNECTING_FAIL:
-            _evt_cb(IOT_WIFI_MSG_RECONNECTING_FAIL);
+            esp_event_post(IOT_EVENT, IOT_APP_WIFI_RECONNECTION_FAIL_EVENT, nullptr, 0, portMAX_DELAY);
             break;
 
         default:
-            ESP_LOGW(TAG, "Received unknown message [id: %ld]", msg);
+            ESP_LOGW(TAG, "Received unknown message [id: %u]", msg);
             break;
     }
 }
@@ -400,7 +390,7 @@ void IotWifi::on_state_changed(bool connected)
         _connected = true;
         _retries = 0;
         _reconnect = false;
-        _evt_cb(IOT_WIFI_MSG_CONNECTED);
+        esp_event_post(IOT_EVENT, IOT_APP_WIFI_CONNECTED_EVENT, nullptr, 0, portMAX_DELAY);
     } else {
         if (_reconnecting)
             return;
@@ -412,7 +402,7 @@ void IotWifi::on_state_changed(bool connected)
             _reconnect = true;
         }
 
+        esp_event_post(IOT_EVENT, IOT_APP_WIFI_RECONNECTING_EVENT, nullptr, 0, portMAX_DELAY);
         reconnect();
-        _evt_cb(IOT_WIFI_MSG_RECONNECTING);
     }
 }

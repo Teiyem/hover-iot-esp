@@ -1,5 +1,5 @@
 {
-  "mqtt_url": "mqtt://localhost:8400",
-  "username": "username",
+  "mqtt_url": "mqtt://192.168.0.176:8400",
+  "username": "atlas",
   "password": "password"
 }

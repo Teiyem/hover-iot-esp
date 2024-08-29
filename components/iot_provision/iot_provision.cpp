@@ -3,16 +3,18 @@
 #include "wifi_provisioning/scheme_softap.h"
 #include "qrcode.h"
 #include <cJSON.h>
-#include "iot_provision.pb-c.h"
+
+//region PRIVATE DEFS
+#define IOT_PROV_QRCODE_URL         "https://espressif.github.io/esp-jumpstart/qrcode.html"
+#define IOT_PROV_QR_VERSION         "v1"
+#define IOT_PROV_DATA_ENDPOINT "provision-data"
+// endregion
 
 /** The storage component.*/
 IotStorage *IotProvision::_iot_storage{};
 
 /** The wifi data received from the provisioning. */
 iot_wifi_data_t IotProvision::_wifi_data{};
-
-/** A callback function to call when provision events occurs. */
-std::function<void(iot_prov_message_e)> IotProvision::_evt_cb{nullptr};
 
 /** A handle to the queue used to send messages from events to the task. */
 QueueHandle_t IotProvision::_queue_handle{nullptr};
@@ -29,14 +31,15 @@ IotProvision::IotProvision(void)
 }
 
 /**
- * Sets a callback function to be called when certain setup events occur.
- *
- * @param[in] cb The callback function to call when an event occurs.
+ * Destroys the IotProvision class.
  */
-void IotProvision::set_callback(std::function<void(iot_prov_message_e)> evt_cb)
+IotProvision::~IotProvision(void)
 {
-    assert(evt_cb != nullptr);
-    _evt_cb = evt_cb;
+    delete _iot_storage;
+    vTaskDelete(_task_handle);
+    vQueueDelete(_queue_handle);
+    _task_handle = nullptr;
+    _queue_handle = nullptr;
 }
 
 /**
@@ -46,13 +49,11 @@ void IotProvision::start(void)
 {
     ESP_LOGI(TAG, "%s: Starting component", __func__);
 
-    assert(_evt_cb != nullptr);
-
     _queue_handle = xQueueCreate(3, sizeof(iot_prov_message_e));
 
     init();
 
-    xTaskCreatePinnedToCore(&runner, "iot_provision_task", 4096, this, 5, &_task_handle, 0);
+    xTaskCreatePinnedToCore(&task, "iot_provision_task", 4096, this, 5, &_task_handle, 0);
 
     ESP_LOGI(TAG, "%s: Component started successfully", __func__);
 }
@@ -67,26 +68,33 @@ void IotProvision::init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
                                                &on_event, this));
 
-    auto storage = new IotStorage(IOT_NVS_FACTORY_PART_NAME, IOT_NVS_FACTORY_NAMESPACE);
+    auto storage = IotFactory::create_scoped<IotStorage>(IOT_NVS_FACTORY_PART_NAME,
+                                                         IOT_NVS_FACTORY_NAMESPACE);
+
     size_t salt_len = 0;
     char *salt = nullptr;
 
-    esp_err_t ret = storage->read("prov", reinterpret_cast<void **>(&salt), salt_len, TYPE_BLOB);
+    esp_err_t ret = get_data(storage.get(), "prov_salt", &salt, salt_len, IOT_TYPE_BLOB);
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "%s: Failed to get setup salt [reason: %s]", __func__, esp_err_to_name(ret));
-        send_to_queue(IOT_PROV_MSG_FAIL);
         return;
     }
 
     size_t verifier_len = 0;
     char *verifier = nullptr;
 
-    ret = storage->read("prov", reinterpret_cast<void **>(&verifier), verifier_len, TYPE_BLOB);
+    ret = get_data(storage.get(), "prov_verifier", &verifier, verifier_len, IOT_TYPE_BLOB);
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "%s: Failed to get verifier salt [reason: %s]", __func__, esp_err_to_name(ret));
-        send_to_queue(IOT_PROV_MSG_FAIL);
+        return;
+    }
+
+    size_t pop_len = 0;
+    char *pop = nullptr;
+
+    ret = get_data(storage.get(), "prov_pop", &pop, pop_len);
+
+    if (ret != ESP_OK) {
         return;
     }
 
@@ -111,23 +119,61 @@ void IotProvision::init(void)
             .verifier_len = static_cast<uint16_t>(verifier_len)
     };
 
-    const char *service_key = "12345678";
+    size_t service_key_len = 0;
+    char *service_key = nullptr;
 
-    wifi_prov_mgr_endpoint_create("provision-data");
+    ret = get_data(storage.get(), "prov_serv_key", &service_key, service_key_len);
+
+    if (ret != ESP_OK) {
+        service_key = iot_char_s("12345678");
+    }
+
+    size_t username_key_len = 0;
+    char *username = nullptr;
+
+    ret = get_data(storage.get(), "prov_username", &username, username_key_len);
+
+    if (ret != ESP_OK) {
+        service_key = iot_char_s("iot-prov");
+    }
+
+    wifi_prov_mgr_endpoint_create(IOT_PROV_DATA_ENDPOINT);
 
     const void *sec_params_ptr = static_cast<const void *>(&sec_params);
 
     ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, sec_params_ptr, service_name, service_key));
 
-    wifi_prov_mgr_endpoint_register("provision-data", on_data, nullptr);
+    wifi_prov_mgr_endpoint_register(IOT_PROV_DATA_ENDPOINT, on_data, nullptr);
 
-    print_qrcode(service_name, "iot-prov", "abcd1234", service_key);
+    print_qrcode(service_name, username, pop, service_key);
 
     ESP_LOGI(TAG, "%s: Starting provision", __func__);
 }
 
 /**
- * Prints a qrcode to the logs.
+ * Retrieves data from storage using the specified key.
+ *
+ * @param[in]  nvs   A pointer to the storage instance.
+ * @param[in]  key   The key to get the data for.
+ * @param[out] data  A pointer to the data buffer.
+ * @param[out] len The length of the data to read.
+ * @param[in]  type The type of data to get. Default is IOT_TYPE_STR.
+ * @return ESP_OK on success, otherwise an error code.
+ */
+esp_err_t IotProvision::get_data(IotStorage *storage, const char *key, char **data, size_t &len, iot_nvs_val_type type)
+{
+    esp_err_t ret = storage->read(key, reinterpret_cast<void **>(data), len, type);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Failed to get %s [reason: %s]", __func__, key ,esp_err_to_name(ret));
+        send_to_queue(IOT_PROV_MSG_FAIL);
+    }
+
+    return ret;
+}
+
+/**
+ * Prints the prov qrcode to the logs.
  *
  * @param[in] name The service name.
  * @param[in] username The service user name.
@@ -138,8 +184,10 @@ void IotProvision::print_qrcode(const char *name, const char *username, const ch
 {
     auto json = cJSON_CreateObject();
 
-    if (json == nullptr)
+    if (json == nullptr) {
         ESP_LOGE(TAG, "%s: Failed to create json object [reason: %s]", __func__, cJSON_GetErrorPtr());
+        return;
+    }
 
     cJSON_AddStringToObject(json, "ver", IOT_PROV_QR_VERSION);
     cJSON_AddStringToObject(json, "name", name);
@@ -166,7 +214,7 @@ void IotProvision::print_qrcode(const char *name, const char *username, const ch
  * @param[in] id The id of the received event.
  * @param[in] data A pointer to the event data.
  */
-void IotProvision::on_event(void *args, const esp_event_base_t base, int32_t id, void *data)
+void IotProvision::on_event([[maybe_unused]] void *args, const esp_event_base_t base, int32_t id, void *data)
 {
     static int retries;
 
@@ -196,16 +244,17 @@ void IotProvision::on_event(void *args, const esp_event_base_t base, int32_t id,
                     ESP_LOGI(TAG, "Failed to connect with provisioned AP, resetting provisioned credentials");
                     wifi_prov_mgr_reset_sm_state_on_failure();
                     retries = 0;
+                    send_to_queue(IOT_PROV_MSG_FAIL);
                 }
                 break;
             }
             case WIFI_PROV_CRED_SUCCESS:
-                ESP_LOGI(TAG, "%s: Received event_id -> Provisioning successful", __func__);
+                ESP_LOGI(TAG, "%s: Received event [id: WIFI_PROV_CRED_SUCCESS]", __func__);
                 retries = 0;
                 send_to_queue(IOT_PROV_MSG_SUCCESS);
                 break;
             case WIFI_PROV_END:
-                ESP_LOGI(TAG, "%s: Received event_id -> Provisioning end", __func__);
+                ESP_LOGI(TAG, "%s: Received event [id: WIFI_PROV_END]", __func__);
                 wifi_prov_mgr_deinit();
                 send_to_queue(IOT_PROV_MSG_FINISHED);
                 break;
@@ -248,50 +297,56 @@ void IotProvision::on_event(void *args, const esp_event_base_t base, int32_t id,
 esp_err_t IotProvision::on_data(uint32_t session, const uint8_t *inbuf, ssize_t inlen, uint8_t **outbuf, ssize_t *outlen,
                       [[maybe_unused]] void *priv_data)
 {
-    if (inbuf == nullptr)
+    if (inbuf == nullptr || inlen == 0)
         return ESP_ERR_INVALID_ARG;
 
-    ESP_LOGI(TAG, "%s: Received from client [size: %zd , data: %s]", __func__, inlen, (char *) inbuf);
+    ESP_LOGI(TAG, "%s: Received from client [session: %lu, size: %zd , data: %s]", __func__, session, inlen, (char *) inbuf);
 
-    auto *data = iot_provision_request__unpack(nullptr, inlen, inbuf);
+    cJSON *root = cJSON_Parse(reinterpret_cast<const char *>(inbuf));
 
-    if (data == nullptr)
-        return ESP_ERR_NO_MEM;
+    if (root == nullptr)
+        return ESP_ERR_INVALID_ARG;
 
-    if (!iot_valid_str(data->server_url) && !iot_valid_str(data->device_name) &&
-        !iot_valid_str(data->device_uuid) && !iot_valid_str(""))
+    if (!cJSON_HasObjectItem(root, "server_url") || !cJSON_HasObjectItem(root, "name")
+        || !cJSON_HasObjectItem(root, "uuid") || !cJSON_HasObjectItem(root, "timezone")) {
+
+        cJSON_free(root);
         return ESP_FAIL;
+    }
 
     iot_device_data_t device_data;
     iot_zero_mem(&device_data, sizeof(iot_device_data_t));
 
-    strcpy(device_data.server_url, data->server_url);
-    strcpy(device_data.name, data->device_name);
-    strcpy(device_data.uuid, data->device_uuid);
-    strcpy(device_data.timezone, data->timezone);
+    strcpy(device_data.server_url, cJSON_GetObjectItem(root, "server_url")->valuestring);
+    strcpy(device_data.name, cJSON_GetObjectItem(root, "name")->valuestring);
+    strcpy(device_data.uuid, cJSON_GetObjectItem(root, "uuid")->valuestring);
+    strcpy(device_data.timezone, cJSON_GetObjectItem(root, "timezone")->valuestring);
 
     if (save(device_data) != ESP_OK) {
-        iot_provision_request__free_unpacked(data, nullptr);
+        cJSON_free(root);
         return ESP_FAIL;
     }
 
-    iot_provision_request__free_unpacked(data, nullptr);
+    cJSON_free(root);
 
-    IotProvisionResponse res = IOT_PROVISION_RESPONSE__INIT;
-    res.status = IOT_PROVISION_STATUS__Success;
-    res.message = (char *) "successfully saved setup data";
+    cJSON *res = cJSON_CreateObject();
 
-    size_t res_size = iot_provision_response__get_packed_size(&res);
+    if (res == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
 
-    *outbuf = iot_allocate_mem<uint8_t>(res_size);
+    cJSON_AddStringToObject(res, "message", "successfully saved setup data");
+    cJSON_AddStringToObject(res, "status", "Success");
+
+    char *out = cJSON_Print(res);
+
+    *outbuf = reinterpret_cast<uint8_t *>(out);
 
     if (*outbuf == nullptr) {
         return ESP_ERR_NO_MEM;
     }
 
-    iot_provision_response__pack(&res, *outbuf);
-
-    *outlen = res_size;
+    *outlen = strlen(out);
 
     return ESP_OK;
 }
@@ -348,9 +403,9 @@ BaseType_t IotProvision::send_to_queue(iot_prov_message_e msg)
  *
  * @param[in] param A pointer to the task parameter (this).
  */
-[[noreturn]] void IotProvision::runner(void *param)
+[[noreturn]] IRAM_ATTR void IotProvision::task(void *param)
 {
-    ESP_LOGI(TAG, "%s -> Task started running", __func__);
+    ESP_LOGI(TAG, "%s: Task started running", __func__);
 
     auto *self = static_cast<IotProvision *>(param);
 
@@ -372,9 +427,12 @@ BaseType_t IotProvision::send_to_queue(iot_prov_message_e msg)
  */
 void IotProvision::process_message(iot_prov_message_e msg)
 {
-    ESP_LOGI(TAG, "%s: Processing message with id -> %d", __func__, msg);
+    ESP_LOGI(TAG, "%s: Processing message [id: %u]", __func__, msg);
 
     switch (msg) {
+        case IOT_PROV_MSG_STARTED:
+            esp_event_post(IOT_EVENT, IOT_APP_PROV_STARTED_EVENT, nullptr, 0,portMAX_DELAY);
+            break;
         case IOT_PROV_MSG_SUCCESS: {
             wifi_config_t current_cfg = {};
             ESP_ERROR_CHECK(esp_wifi_get_config(WIFI_IF_STA, &current_cfg));
@@ -396,8 +454,13 @@ void IotProvision::process_message(iot_prov_message_e msg)
         }
             break;
         case IOT_PROV_MSG_FINISHED:
+            esp_event_post(IOT_EVENT, IOT_APP_PROV_SUCCESS_EVENT, nullptr, 0,portMAX_DELAY);
+            break;
+        case IOT_PROV_MSG_FAIL:
+            esp_event_post(IOT_EVENT, IOT_APP_PROV_FAIL_EVENT, nullptr, 0,portMAX_DELAY);
+            break;
         default:
-            _evt_cb(msg);
+            ESP_LOGW(TAG, "Received unknown message [id: %u]", msg);
             break;
     }
 }

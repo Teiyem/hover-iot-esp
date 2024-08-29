@@ -13,6 +13,6 @@ typedef struct iot_nvs_write_params {
  * An enum of supported nvs value types
  */
 typedef enum iot_nvs_val_type {
-    TYPE_STR = 0,      /**< A string nvs value type. */
-    TYPE_BLOB = 1      /**< A binary blob nvs value type. */
+    IOT_TYPE_STR = 0,      /**< A string nvs value type. */
+    IOT_TYPE_BLOB = 1      /**< A binary blob nvs value type. */
 } iot_nvs_val_type_e;

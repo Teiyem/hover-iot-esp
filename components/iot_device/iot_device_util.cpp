@@ -1,7 +1,7 @@
+#include <cJSON.h>
 #include "iot_common.h"
 #include "iot_device_defs.h"
 #include "esp_err.h"
-#include "iot_device_priv.h"
 
 static constexpr const char *TAG = "IotDevice"; /* A constant used to identify the source of the log message of this. */
 
@@ -80,7 +80,7 @@ iot_device_info_t *iot_device_create(std::string name, iot_device_type_t type)
  */
 iot_attribute_t iot_attribute_create(std::string name, iot_val_t value, bool is_primary)
 {
-    return iot_attribute_t(name, is_primary,value, {});
+    return  {.name = name, .is_primary = is_primary, .value = value, .params = {}};
 }
 
 /**
@@ -125,7 +125,7 @@ esp_err_t iot_device_add_service(iot_device_info_t *device, std::string name, bo
         }
     }
 
-    iot_device_service_t service = iot_device_service_t(name, enabled, core_service);
+    iot_device_service_t service = {.name = name, .enabled = enabled, .core_service = core_service};
 
     device->services.push_back(service);
 
@@ -172,97 +172,51 @@ iot_attribute_req_data_t iot_attribute_create_read_req_data(std::string name)
 }
 
 /**
- * Convert a iot_val_t value to a protobuf _IotValue value.
+ * Adds an iot_val_t value to a json object.
  *
- * @param[in] iot_val The iot_val_t value to convert from.
- * @param[in] type The type of the (iot_val_t) value
- * @param[in,out] proto_val A pointer to the protobuf value to convert to.
+ * @param json A pointer to the object to add the value to.
+ * @param val The value to add.
  * @returns ESP_OK on success, otherwise an error code.
  */
-esp_err_t iot_val_to_proto_val(iot_val_t iot_val, IotValue *proto_val)
+ esp_err_t iot_val_add_to_json(cJSON *json, iot_val_t val)
 {
-    switch (iot_val.type)
+    std::string value;
+    std::string type;
+
+    switch (val.type)
     {
         case IOT_VAL_TYPE_BOOLEAN:
-            proto_val->bool_value = iot_val.b;
-            proto_val->type_case = IOT_VALUE__TYPE_BOOL_VALUE;
-            ESP_LOGD(TAG, "%s: Added attribute param bool_value value [value: %d] to the device",  __func__,  iot_val.b);
-            return ESP_OK;
+            value = std::to_string(val.b).c_str();
+            type = IOT_VAL_TYPE_BOOLEAN_STR;
+            ESP_LOGD(TAG, "%s: Added bool [value: %d] to json object",  __func__,  val.b);
+            break;
         case IOT_VAL_TYPE_INTEGER:
-            proto_val->int_value = iot_val.i;
-            proto_val->type_case = IOT_VALUE__TYPE_INT_VALUE;
-            ESP_LOGD(TAG, "%s: Added attribute param int_value value [value: %lu] to the device",  __func__,  iot_val.i);
-            return ESP_OK;
+            value = std::to_string( val.i).c_str();
+            type = IOT_VAL_TYPE_INTEGER_STR;
+            ESP_LOGD(TAG, "%s: Added int [value: %lu] to json object",  __func__,  val.i);
+            break;
         case IOT_VAL_TYPE_FLOAT:
-            proto_val->float_value = iot_val.f;
-            proto_val->type_case = IOT_VALUE__TYPE_FLOAT_VALUE;
-            ESP_LOGD(TAG, "%s: Added attribute param float_value value [value: %f] to the device",  __func__,  iot_val.f);
-            return ESP_OK;
+            value = std::to_string(val.f).c_str();
+            type = IOT_VAL_TYPE_FLOAT_STR;
+            ESP_LOGD(TAG, "%s: Added float [value: %f] to json object",  __func__,  val.f);
+            break;
         case IOT_VAL_TYPE_LONG:
-            proto_val->long_value = iot_val.l;
-            proto_val->type_case = IOT_VALUE__TYPE_LONG_VALUE;
-            ESP_LOGD(TAG, "%s: Added attribute param long_value value [value: %llu] to the device",  __func__, iot_val.l);
-            return ESP_OK;
+            value = std::to_string(val.l).c_str();
+            type = IOT_VAL_TYPE_LONG_STR;
+            ESP_LOGD(TAG, "%s: Added long [value: %llu] to json object",  __func__,  val.l);
+            break;
         case IOT_VAL_TYPE_STRING:
-            proto_val->string_value = iot_val.s;
-            proto_val->type_case = IOT_VALUE__TYPE_STRING_VALUE;
-            ESP_LOGD(TAG, "%s: Added attribute param string_value value [value: %s] to the device",  __func__, iot_val.s);
-            return ESP_OK;
+            value = val.s;
+            type = IOT_VAL_TYPE_STRING_STR;
+            ESP_LOGD(TAG, "%s: Added bool [value: %s] to json object",  __func__,  val.s);
+            break;
         default:
+            ESP_LOGE(TAG, "%s: Invalid value [type: %d", __func__, val.type);
             return ESP_ERR_INVALID_ARG;
     }
-}
 
-/**
- * Serialize the attribute request data into a protobuf attribute response.
- *
- * @param[in] data A pointer to the data to convert from.
- * @param[out] res A pointer to the protobuf to serialize.
- * @return
- */
-esp_err_t iot_attribute_res_proto_from_req_data(iot_attribute_req_data_t *data, IotAttributeResponse **res)
-{
-    static IotAttributeResponse proto = IOT_ATTRIBUTE_RESPONSE__INIT;
-    IotAttributeData attribute = IOT_ATTRIBUTE_DATA__INIT;
-
-    attribute.name = iot_char_s(data->name.c_str());
-
-    IotValue value = IOT_VALUE__INIT;
-
-    esp_err_t ret = iot_val_to_proto_val(data->value, &value);
-
-    if (ret != ESP_OK)
-        return ret;
-
-    attribute.value = &value;
-
-    proto.attributes = iot_allocate_mem<IotAttributeData *>(sizeof(IotAttributeData *));
-    proto.attributes[0] = &attribute;
-    proto.n_attributes = 1;
-
-    *res = &proto;
+    cJSON_AddStringToObject(json, "value", value.c_str());
+    cJSON_AddStringToObject(json, "type", type.c_str());
 
     return ESP_OK;
-}
-
-/**
- * Frees the device info protobuf and the buffer.
- *
- * @param[in] info The device protobuf info to free.
- * @param[in] buf A pointer to the buffer to free.
- */
-void iot_device_info_proto_free(uint8_t *buf, IotDeviceInfo &info)
-{
-    for (int i = 0; i < info.n_attributes; i++) {
-        if (info.attributes[i]) {
-            for (int j = 0; j < info.attributes[i]->n_params; j++) {
-                iot_free_one(info.attributes[i]->params[j]->value);
-                iot_free_one(info.attributes[i]->params[j]);
-            }
-            iot_free_one(info.attributes[i]->value);
-            iot_free_one(info.attributes[i]);
-        }
-    }
-
-    iot_free(info.attributes, buf, info.services);
 }

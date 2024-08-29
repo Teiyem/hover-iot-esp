@@ -25,6 +25,24 @@ menu "Hover Application"
            Don't set this to true if hover the mqtt is disabled.
     endif
 
+    choice IOT_HOVER_SERVER_OPTION
+        prompt "Environment options"
+        default IOT_HOVER_SERVER_HTTP
+        help
+            The current running environment of the project
+
+        config IOT_HOVER_SERVER_HTTP
+           bool "Use the http server"
+           help
+              If selected the device will run a http server.
+
+        config IOT_HOVER_SERVER_HTTPS
+           bool "Use the https server"
+           help
+               If selected the device will run a https server.
+
+    endchoice
+
     choice IOT_HOVER_ENV_OPTION
         prompt "Environment options"
         default IOT_HOVER_ENV_DEV

@@ -4,13 +4,14 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include <string>
+#include <cJSON.h>
 
 // region STANDARD PARAMETERS
 #define IOT_VAL_TYPE_INTEGER_STR  "integer"    /**< A string representation of an integer value type. */
 #define IOT_VAL_TYPE_FLOAT_STR    "float"      /**< A string representation of float value type. */
 #define IOT_VAL_TYPE_LONG_STR     "long"       /**< A string representation of a long value type */
 #define IOT_VAL_TYPE_STRING_STR   "string"     /**< A string representation of a string value type. */
-#define IOT_VAL_TYPE_BOOLEAN_STR  "boolean"    /**< A string representation of a boolean value type. */
+#define IOT_VAL_TYPE_BOOLEAN_STR  "bool"    /**< A string representation of a boolean value type. */
 // endregion
 
 // region STANDARD PARAMETERS
@@ -116,8 +117,8 @@ typedef enum iot_attribute_req_mode
 typedef struct iot_device_service
 {
     std::string name;       /**< The service's name. */
-    bool enabled;           /**< A flag indicating whether the service is enabled. */
-    bool core_service;      /**< A flag indicating whether the service is a core service. */
+    bool enabled;           /**< Indicates whether the service is enabled. */
+    bool core_service;      /**< Inndicates whether the service is a core service. */
 } iot_device_service_t;
 
 /**
@@ -139,6 +140,7 @@ typedef struct iot_device_info
     std::string device_name;                       /**< The device's name. */
     iot_device_type_t device_type;                 /**< The device's type. */
     iot_device_meta_t metadata;                    /**< The device's metadata. */
+    std::string uuid{};                            /**< The device's uuid. */
     std::vector<iot_attribute_t> attributes;       /**< The device's attributes list. */
     std::vector<iot_device_service_t> services;    /**< The device's services list. */
 } iot_device_info_t;
@@ -221,4 +223,5 @@ esp_err_t iot_device_add_service(iot_device_info_t *device, std::string name, bo
 esp_err_t iot_device_add_attribute(iot_device_info_t *device, iot_attribute_t attribute);
 
 iot_attribute_req_data_t iot_attribute_create_read_req_data(std::string name);
+esp_err_t iot_val_add_to_json(cJSON *p_json, iot_val_t val);
 // endregion

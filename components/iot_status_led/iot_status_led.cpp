@@ -1,21 +1,22 @@
 #include "iot_status_led.h"
 
-/** The Led's current mode. */
-iot_led_mode_e IotStatusLed::_mode{IOT_STATIC};
+/** The led's current mode. */
+iot_led_mode_e IotStatusLed::_mode{IOT_LED_STATIC};
 
 /** The task handle. */
 TaskHandle_t IotStatusLed::_task_handle{nullptr};
 
 /**
  * Starts the status led component.
- *
  */
-void IotStatusLed::start(void)
+esp_err_t IotStatusLed::start(void)
 {
     if (_started) {
         ESP_LOGW(TAG, "%s: Component is already started", __func__);
-        return;
+        return ESP_OK;
     }
+
+    _toggle_mutex = xSemaphoreCreateMutex();
 
     auto result = gpio_config(&_cfg);
 
@@ -33,6 +34,18 @@ void IotStatusLed::start(void)
     _started = true;
 
     ESP_LOGI(TAG, "%s: Starting component", __func__);
+
+    return ESP_OK;
+}
+
+/**
+ * Destroys the IotStatusLed class.
+ */
+IotStatusLed::~IotStatusLed(void)
+{
+    if (_started){
+        stop();
+    }
 }
 
 /**
@@ -42,6 +55,9 @@ void IotStatusLed::stop(void)
 {
     vTaskDelete(_task_handle);
     _task_handle = nullptr;
+    if (_toggle_mutex)
+        vSemaphoreDelete(_toggle_mutex);
+    _toggle_mutex = nullptr;
 }
 
 /**
@@ -52,8 +68,16 @@ void IotStatusLed::stop(void)
  */
 esp_err_t IotStatusLed::toggle(bool state)
 {
+    BaseType_t ret = xSemaphoreTake(_toggle_mutex, 10 / portTICK_PERIOD_MS);
+
+    if (ret != pdTRUE)
+        return ESP_FAIL;
+
     _state = state;
     ESP_LOGI(TAG, "%s: Toggling the led [to: %s]", __func__, _state? "on" : "off");
+
+    xSemaphoreGive(_toggle_mutex);
+
     return gpio_set_level(_pin, _inverted ? !state : state);
 }
 
@@ -73,9 +97,9 @@ void IotStatusLed::set_mode(const iot_led_mode_e mode)
  */
 void IotStatusLed::handle(void)
 {
-    if (_mode == IOT_STATIC) return;
+    if (_mode == IOT_LED_STATIC) return;
 
-    const auto timeout = _mode == IOT_SLOW_BLINK? _slow_blink : _fast_blink;
+    const auto timeout = _mode == IOT_LED_SLOW_BLINK ? _slow_blink : _fast_blink;
 
     if (iot_millis() - _last_toggle > timeout)
     {
@@ -91,7 +115,7 @@ void IotStatusLed::handle(void)
  *
  * @param[in] param A pointer to the task parameter (this).
  */
-IRAM_ATTR [[noreturn]] void IotStatusLed::task(void *param)
+[[noreturn]] IRAM_ATTR void IotStatusLed::task(void *param)
 {
     size_t heap_size = heap_caps_get_total_size(MALLOC_CAP_8BIT);
 
@@ -106,6 +130,16 @@ IRAM_ATTR [[noreturn]] void IotStatusLed::task(void *param)
         self->handle();
         vTaskDelay(600 / portTICK_PERIOD_MS);
     }
+}
+
+/**
+ * Get the state of the led.
+ *
+ * @return The led state
+ */
+bool IotStatusLed::state(void) const
+{
+    return  _inverted ? !_state : _state;
 }
 
 

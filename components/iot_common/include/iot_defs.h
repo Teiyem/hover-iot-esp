@@ -2,23 +2,28 @@
 
 //region nvs constants
 
-#define IOT_NVS_DEFAULT_PART_NAME "nvs"            /**< The default partition name.*/
-#define IOT_NVS_DEFAULT_NAMESPACE "app"            /**< The default partition namespace.*/
-#define IOT_NVS_FACTORY_PART_NAME "factory_nvs"    /**< The factory partition name.*/
-#define IOT_NVS_FACTORY_NAMESPACE "iot_factory"    /**< The factory partition namespace.*/
-#define IOT_NVS_DEVICE_DATA_KEY "iot_device_data"  /**< The device data nvs key .*/
-#define IOT_NVS_WIFI_DATA_KEY "iot_wifi_data"      /**< The wifi data nvs key .*/
+#define IOT_NVS_DEFAULT_PART_NAME "nvs"            /**< The default partition name. */
+#define IOT_NVS_DEFAULT_NAMESPACE "app"            /**< The default partition namespace. */
+#define IOT_NVS_FACTORY_PART_NAME "factory_nvs"    /**< The factory partition name. */
+#define IOT_NVS_FACTORY_NAMESPACE "iot_factory"    /**< The factory partition namespace. */
+#define IOT_NVS_DEVICE_DATA_KEY "iot_device_data"  /**< The device data nvs key. */
+#define IOT_NVS_WIFI_DATA_KEY "iot_wifi_data"      /**< The wifi data nvs key. */
 
 // endregion
 
 //region maximum len constraints
-#define IOT_MAX_SSID_LEN 32          /**< The IEEE standard maximum ssid length .*/
-#define IOT_MAX_PASSWORD_LEN 64      /**< The IEEE standard maximum wifi password length .*/
-#define IOT_MAX_ANY_NAME_LEN 20      /**< The maximum name length FOR ANY.*/
-#define IOT_MAX_ANY_STRING_LEN 255   /**< The maximum long 's base url length.*/
+#define IOT_MAX_SSID_LEN 32          /**< The IEEE standard maximum ssid length . */
+#define IOT_MAX_PASSWORD_LEN 64      /**< The IEEE standard maximum wifi password length . */
+#define IOT_MAX_ANY_NAME_LEN 20      /**< The maximum name length for any. */
+#define IOT_MAX_ANY_STRING_LEN 255   /**< The maximum long 's base url length. */
 // endregion
 
-#define IOT_DEVICE_OTA_SERVICE "OTA"   /**< The identify used for the ota capability.*/
+#define IOT_DEVICE_OTA_SERVICE "OTA"   /**< The identify used for the ota capability. */
+
+
+#define IOT_REBOOT_SAFE_TIME "15s"   /**< The minimum reboot delay considered as a safe time.*/
+
+ESP_EVENT_DECLARE_BASE(IOT_EVENT); /**< The application event base declaration . */
 
 /**
  * A struct for the store wifi credentials.
@@ -55,34 +60,70 @@ typedef enum iot_wifi_op_mode
 */
 typedef uint32_t iot_base_message_e;
 
-/**
- * A struct for message queues.
- */
-typedef struct iot_queue_message
-{
-    iot_base_message_e id;  /**< The message's id.*/
-    void *data;             /** The message's data */
-} iot_queue_message_t;
+#define IOT_APP_MSG_START 0   /**< The start of the iot application messages. Reserved 0 to 40. */
+#define IOT_APP_EVENT_START 0 /**< The start of the iot application messages. Reserved 0 to 21. */
 
-#define IOT_APP_MSG_START 0 /**< The start of the iot application messages. Reserved 0 to 20. */
+/**
+ * An enum of application events.
+ */
+typedef enum iot_app_event
+{
+    IOT_APP_PROV_STARTED_EVENT = IOT_APP_EVENT_START,  /**< Indicates that provisioning is started. */
+    IOT_APP_PROV_SUCCESS_EVENT,                        /**< Indicates that provisioning is successful. */
+    IOT_APP_PROV_FAIL_EVENT,                           /**< Indicates that provisioning failed. */
+
+    IOT_APP_WIFI_CONNECTED_EVENT,                      /**< Indicates that wifi connected successful. */
+    IOT_APP_WIFI_CONNECTION_FAIL_EVENT,                /**< Indicates that wifi connection failed. */
+    IOT_APP_WIFI_RECONNECTING_EVENT,                   /**< Indicates that wifi is reconnecting. */
+    IOT_APP_WIFI_RECONNECTION_FAIL_EVENT,              /**< Indicates that wifi reconnection failed. */
+    IOT_APP_WIFI_DISCONNECTED_EVENT,                   /**< Indicates that wifi disconnected. */
+    IOT_APP_REQUEST_REBOOT_EVENT,                      /**< Indicates that the device has to reboot. */
+
+#ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
+    IOT_APP_MQTT_CONNECTED_EVENT,                     /**< Indicates that mqtt client is successful connected. */
+    IOT_APP_MQTT_CONNECTION_FAIL_EVENT,               /**< Indicates that mqtt client connection failed. */
+    IOT_APP_MQTT_DISCONNECTED_EVENT,                  /**< Indicates that mqtt client disconnected. */
+#endif
+} iot_app_event_e;
+
+/**
+ * A struct for event queues.
+ */
+typedef struct iot_event_queue
+{
+    iot_app_event_e id;     /**< The event's id.*/
+    void *data;             /** The event's data */
+} iot_event_queue_t;
+
+
+/** A structure for IOT_APP_REQUEST_REBOOT_EVENT message */
+typedef struct iot_event_request_reboot {
+    uint64_t delay = 15000;
+} iot_event_request_reboot_t;
 
 /**
  * An enum of application messages.
  */
 typedef enum iot_app_message
 {
-    IOT_APP_MSG_PROV_START = IOT_APP_MSG_START, /**< The provisioning has. */
-    IOT_APP_MSG_PROV_OK,                        /**< The provisioning was successful. */
-    IOT_APP_MSG_PROV_FAIL,                      /**< The provisioning failed. */
-    IOT_APP_MSG_WIFI_CONNECT_OK,                /**< The wifi is successful connected. */
-    IOT_APP_MSG_WIFI_CONNECT_FAIL,              /**< The wifi connection failed. */
-    IOT_APP_MSG_WIFI_RECONNECT,                 /**< The wifi is reconnecting. */
-    IOT_APP_MSG_WIFI_RECONNECT_OK,              /**< The wifi reconnection was successful. */
-    IOT_APP_MSG_WIFI_RECONNECT_FAIL,            /**< The wifi reconnection failed. */
-    IOT_APP_MSG_WIFI_DISCONNECT,                /**< The wifi disconnected. */
-    IOT_APP_MSG_OTA_UPDATE_OK,                  /**< The OTA update process was successful. */
-    IOT_APP_MSG_OTA_UPDATE_FAIL,                /**< The OTA update failed. */
-    IOT_APP_MSG_RESTART_REQUIRED = 20           /**< Message indicating that a restart is required. */
+    IOT_APP_MSG_PROV_STARTED = IOT_APP_MSG_START, /**< The provisioning has started. */
+    IOT_APP_MSG_PROV_SUCCESS,                     /**< The provisioning is successful. */
+    IOT_APP_MSG_PROV_FAIL,                        /**< The provisioning failed. */
+
+    IOT_APP_MSG_WIFI_CONNECTED,                   /**< The wifi connected successful. */
+    IOT_APP_MSG_WIFI_CONNECTION_FAIL,             /**< The wifi connection failed. */
+    IOT_APP_MSG_WIFI_RECONNECTING,                /**< The wifi is reconnecting. */
+    IOT_APP_MSG_WIFI_RECONNECTION_FAIL,           /**< The wifi reconnection failed. */
+    IOT_APP_MSG_WIFI_DISCONNECTED,                /**< The wifi disconnected. */
+
+    IOT_APP_MSG_OTA_UPDATE_OK,                    /**< The OTA update process was successful. */
+    IOT_APP_MSG_OTA_UPDATE_FAIL,                  /**< The OTA update failed. */
+
+#ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
+    IOT_APP_MSG_MQTT_CONNECTED,                  /**< The mqtt client is successful connected. */
+    IOT_APP_MSG_MQTT_CONNECTION_FAIL,            /**< The mqtt client connection failed. */
+    IOT_APP_MSG_MQTT_DISCONNECTED,               /**< The mqtt client disconnected. */
+#endif
 } iot_app_message_e;
 
 

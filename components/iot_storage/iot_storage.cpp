@@ -38,7 +38,7 @@ IotStorage::IotStorage(const char *partition, const char *name_space)
 }
 
 /**
- * Destructor for IotStorage class.
+ * Destroys the IotStorage class.
  */
 IotStorage::~IotStorage(void)
 {
@@ -91,7 +91,8 @@ esp_err_t IotStorage::read(const char *key, void *buf, size_t len)
         return ESP_ERR_INVALID_STATE;
 
     if (len == 0) {
-        ESP_LOGE(TAG, "%s:  Cannot -> %d", __func__, len);
+        ESP_LOGE(TAG, "%s: Cannot get blob, buf len is zero", __func__);
+        return ESP_ERR_INVALID_ARG;
     }
 
     return nvs_get_blob(_handle, key, buf, &len);
@@ -114,9 +115,9 @@ esp_err_t IotStorage::read(const char *key, void **buf, size_t &len, iot_nvs_val
     esp_err_t ret = ESP_OK;
 
     // Get the size first
-    if (type == TYPE_STR)
+    if (type == IOT_TYPE_STR)
         ret = nvs_get_str(_handle, key, nullptr, &len);
-    else if (type == TYPE_BLOB)
+    else if (type == IOT_TYPE_BLOB)
         ret = nvs_get_blob(_handle, key, nullptr, &len);
 
     if (ret != ESP_OK) {
@@ -124,13 +125,13 @@ esp_err_t IotStorage::read(const char *key, void **buf, size_t &len, iot_nvs_val
         return ret;
     }
 
-    ESP_LOGI(TAG, "%s:  Got string with size -> %d", __func__, len);
+    ESP_LOGI(TAG, "%s:  Got string with [size: %d]", __func__, len);
 
     *buf = iot_allocate_mem<uint8_t>(len);
 
-    if (type == TYPE_STR)
+    if (type == IOT_TYPE_STR)
         ret = nvs_get_str(_handle, key, reinterpret_cast<char *>(*buf), &len);
-    else if (type == TYPE_BLOB)
+    else if (type == IOT_TYPE_BLOB)
         ret = nvs_get_blob(_handle, key, reinterpret_cast<char *>(*buf), &len);
 
     if (ret != ESP_OK) {
@@ -183,8 +184,6 @@ esp_err_t IotStorage::erase(const char *key)
  */
 void IotStorage::print_stats(const char *partition, const char *name_space)
 {
-    ESP_LOGI(TAG, "%s: Partition Name -> %s", __func__, partition);
-
     nvs_stats_t nvs_stats;
     esp_err_t ret = nvs_get_stats(partition, &nvs_stats);
 
@@ -195,7 +194,7 @@ void IotStorage::print_stats(const char *partition, const char *name_space)
         ESP_LOGI(TAG, "%s: Total [entries: %d]", __func__, nvs_stats.total_entries);
         ESP_LOGI(TAG, "%s: Namespace [count: %d]", __func__, nvs_stats.namespace_count);
     } else {
-        ESP_LOGE(TAG, "%s: Failed to get nvs stats for partition -> %s, reason -> %s", __func__, partition,
+        ESP_LOGE(TAG, "%s: Failed to get nvs stats for [partition: %s, reason: %s]", __func__, partition,
                  esp_err_to_name(ret));
 
     }

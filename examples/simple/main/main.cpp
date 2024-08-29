@@ -7,7 +7,6 @@
 #include "iot_common.h"
 #include <driver/gpio.h>
 
-
 /* A constant used to identify the source of the log message of this file. */
 static constexpr const char *MAIN_TAG = "Main";
 
@@ -154,7 +153,7 @@ void test_time_conversion()
  */
 extern "C" void app_main(void)
 {
-    ESP_LOGI(MAIN_TAG, "%s: Application starting %s", __func__, iot_now_str());
+    ESP_LOGI(MAIN_TAG, "%s: Application starting %s", __func__, iot_now_str().data());
 
     iot_device_info_t *device = iot_device_create("Light", IOT_DEVICE_TYPE_LIGHT);
 
@@ -169,10 +168,10 @@ extern "C" void app_main(void)
 
     iot_device_add_service(device, IOT_DEVICE_OTA_SERVICE, true, true);
 
-    iot_device_cfg_t cfg = iot_device_cfg_t{device, IOT_ATTRIBUTE_CB_RW, &iot_attribute_read_cb, &iot_attribute_write_cb,
-                                            nullptr};
+    iot_device_cfg_t cfg = {.device_info = device, .req_mode = IOT_ATTRIBUTE_CB_RW, .read_cb = &iot_attribute_read_cb,
+                            .write_cb = &iot_attribute_write_cb,.notify_cfg = nullptr};
 
-    iot_app_cfg_t app_cfg = iot_app_cfg_t(IOT_WIFI_APSTA, &cfg, "IOT_LIGHT_543210XV6");
+    iot_app_cfg_t app_cfg = {.op_mode = IOT_WIFI_APSTA, .device_cfg = &cfg, .model = "IOT_LIGHT_543210XV6" };
 
     IotApp.start(app_cfg);
 

@@ -1,7 +1,6 @@
+#include <cJSON.h>
 #include <sys/param.h>
 #include "iot_ota.h"
-#include "iot_ota.pb-c.h"
-#include "iot_application.h"
 
 /** The handle for the OTA update. */
 esp_ota_handle_t IotOta::_update_handle{};
@@ -27,26 +26,31 @@ IotOta::IotOta(void)
 }
 
 /**
- * Destructor for IotOta class.
- */
-IotOta::~IotOta(void)
-{
-    delete _iot_server;
-}
-
-/**
  * Initializes the IotOta component.
+ * @param app_desc The app description.
  *
  * @return Returns ESP_OK on success, otherwise an error code
  */
-esp_err_t IotOta::init(void)
+esp_err_t IotOta::init(esp_app_desc_t *app_desc)
 {
     esp_err_t ret = ESP_FAIL;
 
+    const esp_partition_t *running = esp_ota_get_running_partition();
+
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            ESP_LOGI(TAG, "%s: Marking update as success", __func__);
+                esp_ota_mark_app_valid_cancel_rollback();
+//                esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+    }
+
+    _app_info = app_desc;
+
     _update_partition = esp_ota_get_next_update_partition(nullptr);
 
-    if (_update_partition == nullptr)
-    {
+    if (_update_partition == nullptr) {
         ESP_LOGE(TAG, "%s: Failed to get next ota partition", __func__);
         return ret;
     }
@@ -69,79 +73,75 @@ esp_err_t IotOta::init(void)
 esp_err_t IotOta::on_update(httpd_req_t *req)
 {
     char buf[IOT_OTA_MAX_BUFFER_SIZE];
-
     int recv;
-    bool got_start = false;
-    char res_message[100];
-
-    IotResponse res = IOT_RESPONSE__INIT;
-    res.status = IOT_RESPONSE_STATUS__FAILED;
-    res.message = res_message;
-
-    size_t res_size = iot_response__get_packed_size(&res);
-
-    char *out_buf = iot_allocate_mem<char>(res_size);
-
+    bool body_start = false;
     size_t rem = req->content_len;
-
     esp_err_t ret = ESP_FAIL;
+    _ota_state = IOT_OTA_STATE_FAILED;
+    int read = 0;
 
-    if (out_buf == nullptr)
-        return _iot_server->send_err(req, iot_error_create_text(HTTPD_500_INTERNAL_SERVER_ERROR,
-                                                                "Failed to create response object"));
-
-    while(rem > 0)
-    {
+    do {
         recv = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf)));
 
-        if (recv < 0)
-        {
-            if (recv == HTTPD_SOCK_ERR_TIMEOUT)
-            {
-                ESP_LOGI(TAG, "%s: Socket Timed out, retrying to receive content....", __func__ );
+        if (recv < 0) {
+            if (recv == HTTPD_SOCK_ERR_TIMEOUT) {
+                ESP_LOGI(TAG, "%s: Socket Timed out, retrying to receive content....", __func__);
                 continue;
             }
-            ESP_LOGI(TAG, "%s: Failed to receive content [reason: %d]", __func__ , recv);
+            ESP_LOGI(TAG, "%s: Failed to receive content [reason: %d]", __func__, recv);
 
-            res.message = iot_char_s("Failed to receive content");
-            iot_response__pack(&res, (uint8_t *) out_buf);
-            return ESP_FAIL;
+            return _iot_server->send_err(req, "Failed to receive content");
         }
 
-        if (!got_start)
-        {
-            got_start = true;
+        if (!body_start) {
+            body_start = true;
 
-            char *temp = strstr(buf, "\r\n\r\n") + 4;
-            int temp_len = recv - (temp - buf);
+            char *temp = strstr(buf, "\r\n\r\n");
 
-            ESP_LOGI(TAG, "%s: OTA file [size: %d\r\n", __func__ , rem);
+            if (temp == nullptr) {
+                ESP_LOGE(TAG, "%s: Malformed request, no header-body separator found", __func__);
+                return _iot_server->send_err(req, "Malformed request");
+            }
 
-            esp_err_t err = start();
+            temp += 4;
 
-            if (err != ESP_OK)
-                return _iot_server->send_err(req, iot_error_response_create_proto(HTTPD_500_INTERNAL_SERVER_ERROR, out_buf));
+            int len = recv - (temp - buf);
 
-            write(temp, temp_len, &rem);
+            ESP_LOGI(TAG, "%s: OTA file [size: %d\r\n", __func__, rem);
+
+            ret = start();
+
+            if (ret != ESP_OK)
+                return _iot_server->send_err(req, "Failed to start update");
+
+            ret = write(temp, len, &rem);
+
+            if (ret != ESP_OK)
+                return _iot_server->send_err(req, "Failed to write update");
+
+            read += len;
+        } else {
+            ret = write(buf, recv, &rem);
+            if (ret != ESP_OK)
+                return _iot_server->send_err(req, "Failed to write update");
+
+            read += recv;
         }
-        else
-            write(buf, recv, &rem);
+
+
+    } while (recv > 0 && read < req->content_len);
+
+    ret = end();
+
+    if (ret != ESP_OK)
+        return _iot_server->send_err(req, "Failed to end update");
+
+    if (_ota_state == IOT_OTA_STATE_SUCCESS) {
+        iot_event_request_reboot_t reboot = {};
+        esp_event_post(IOT_EVENT, IOT_APP_MSG_OTA_UPDATE_OK, &reboot, sizeof(iot_event_request_reboot_t), portMAX_DELAY);
     }
 
-    if (end() != ESP_OK)
-    {
-        _ota_state = IOT_OTA_STATE_FAILED;
-        iot_response__pack(&res, (uint8_t *) out_buf);
-        return _iot_server->send_err(req, iot_error_response_create_proto(HTTPD_500_INTERNAL_SERVER_ERROR, out_buf));
-    }
-
-    if (_ota_state == IOT_OTA_STATE_SUCCESS)
-        IotApplication::reboot(iot_convert_time_to_ms("10s"));
-
-    iot_response__pack(&res, (uint8_t *) out_buf);
-    ret = _iot_server->send_res(req, iot_response_create_proto(reinterpret_cast<char *>(&res), res_size));
-
-    free(out_buf);
+    ret = _iot_server->send_res(req, "Update completed", true);
 
     return ret;
 }
@@ -154,49 +154,41 @@ esp_err_t IotOta::on_update(httpd_req_t *req)
  */
 esp_err_t IotOta::on_status(httpd_req_t *req)
 {
-    ESP_LOGI(TAG, "%s: Processing request to get ota status", __func__ );
-    IotOtaStatusResponse  res = IOT_OTA_STATUS_RESPONSE__INIT;
+    ESP_LOGI(TAG, "%s: Processing request to get ota status", __func__);
+
+    cJSON *res = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(res, "version", _app_info->version);
+    cJSON_AddStringToObject(res, "compile_date", __DATE__);
+    cJSON_AddStringToObject(res, "compile_time", __TIME__);
+
+    const char *status = "status";
 
     switch (_ota_state) {
+        case IOT_OTA_STATE_IDLE:
+            cJSON_AddStringToObject(res, status, "idle");
+            break;
         case IOT_OTA_STATE_SUCCESS:
-            res.status = IOT_RESPONSE_STATUS__SUCCESS;
+            cJSON_AddStringToObject(res, status, "updated");
             break;
         case IOT_OTA_STATE_FAILED:
-            res.status = IOT_RESPONSE_STATUS__FAILED;
+            cJSON_AddStringToObject(res, status, "failed");
             break;
         case IOT_OTA_STATE_REJECTED:
-            res.status = IOT_RESPONSE_STATUS__REJECTED;
+            cJSON_AddStringToObject(res, status, "error");
             break;
         default:
             break;
     }
+    char *buf = cJSON_Print(res);
 
-    if (_app_info != nullptr)
-    {
-        res.version = _app_info->version;
-        res.compile_date = _app_info->date;
-        res.compile_time = _app_info->time;
-    }
-    else
-    {
-        res.version = iot_char_s("Unknown");
-        res.compile_date = iot_char_s(__DATE__);
-        res.compile_time = iot_char_s(__TIME__);
-    }
-
-    size_t res_size = iot_ota_status_response__get_packed_size(&res);
-
-    char *buf = iot_allocate_mem<char>(res_size);
+    cJSON_free(res);
 
     if (buf == nullptr)
-       return _iot_server->send_err(req, iot_error_create_text(HTTPD_500_INTERNAL_SERVER_ERROR,
-                                                         "Failed to serialize response. Out of memory"));
-
-    iot_ota_status_response__pack(&res, reinterpret_cast<uint8_t *>(buf));
+        return _iot_server->send_err(req,IOT_HTTP_SERIALIZATION_ERR);
 
 
-
-    return _iot_server->send_res(req, iot_response_create_proto(buf, res_size));
+    return _iot_server->send_res(req, buf);
 }
 
 /**
@@ -206,12 +198,11 @@ esp_err_t IotOta::on_status(httpd_req_t *req)
  */
 esp_err_t IotOta::start(void)
 {
-    ESP_LOGI(TAG, "%s: Starting update [time: %s]", __func__, iot_now_str());
+    ESP_LOGI(TAG, "%s: Starting update [time: %s]", __func__, iot_now_str().c_str());
 
     esp_err_t ret = esp_ota_begin(_update_partition, OTA_SIZE_UNKNOWN, &_update_handle);
 
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "%s-> Failed to begin ota [reason: %s]", __func__, esp_err_to_name(ret));
         esp_ota_abort(_update_handle);
         return ESP_FAIL;
@@ -220,7 +211,7 @@ esp_err_t IotOta::start(void)
     ESP_LOGI(TAG, "%s-> Writing to ota partition [subtype: %d, offset: 0x%lx]", __func__, _update_partition->subtype,
              _update_partition->address);
 
-    return  ESP_OK;
+    return ESP_OK;
 }
 
 /**
@@ -233,12 +224,11 @@ esp_err_t IotOta::start(void)
  */
 esp_err_t IotOta::write(char *buf, size_t size, size_t *remaining)
 {
-    ESP_LOGI(TAG, "%s: Writing [next: %u bytes, remaining: %u bytes]", __func__ , size, *remaining);
+    ESP_LOGI(TAG, "%s: Writing [next: %u bytes, remaining: %u bytes]", __func__, size, *remaining);
 
     esp_err_t ret = esp_ota_write(_update_handle, buf, size);
 
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "%s: Failed to write to ota partition [reason: %s], aborting update", __func__, esp_err_to_name(ret));
         esp_ota_abort(_update_handle);
         return ret;
@@ -259,12 +249,10 @@ esp_err_t IotOta::end(void)
 
     esp_err_t ret = esp_ota_end(_update_handle);
 
-    if (ret == ESP_OK)
-    {
+    if (ret == ESP_OK) {
         ret = esp_ota_set_boot_partition(_update_partition);
 
-        if (ret == ESP_OK)
-        {
+        if (ret == ESP_OK) {
             const esp_partition_t *current_partition = esp_ota_get_boot_partition();
             ESP_LOGI(TAG, "%s: Update successful. Current boot partition [subtype: %d, offset: 0x%lx]", __func__,
                      current_partition->subtype, current_partition->address);
@@ -276,11 +264,9 @@ esp_err_t IotOta::end(void)
             }
 
             _ota_state = IOT_OTA_STATE_SUCCESS;
-        }
-        else
+        } else
             ESP_LOGE(TAG, "%s: Failed to set update [reason: %s]", __func__, esp_err_to_name(ret));
-    }
-    else
+    } else
         ESP_LOGE(TAG, "%s: Failed to complete update [reason: %s]", __func__, esp_err_to_name(ret));
 
     return ret;

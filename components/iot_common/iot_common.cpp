@@ -3,6 +3,9 @@
 
 static constexpr const char *TAG = "IotCommon"; /**< A constant used to identify the source of the log message of this. */
 
+/* Application events definitions */
+ESP_EVENT_DEFINE_BASE(IOT_EVENT);
+
 /**
  * Zeros out a block of memory.
  *
@@ -122,22 +125,31 @@ bool iot_valid_str(const char *str)
 }
 
 /**
- * Gets the current time as a time_point.
- * @return A time_point object.
+ * Gets the current time as a the UTC epoch since January 1st 1970.
+ * @return A current time.
  */
-std::chrono::_V2::system_clock::time_point iot_now(void)
+const time_t *iot_now(void)
 {
-    return std::chrono::system_clock::now();
+    time_t now;
+    time(&now);
+    return std::move(&now);
 }
 
 /**
- * Gets a string representation of the current time, as determined by the device's internal clock.
- * @return A pointer to the time string.
+ * Gets a string representation of the current time.
+ * @return The time string.
  */
-const char *iot_now_str(void)
+std::string iot_now_str(void)
 {
-    const std::time_t now{std::chrono::system_clock::to_time_t(iot_now())};
-    return std::asctime(std::localtime(&now));
+    char datetime_str[64];
+
+    struct tm time_info;
+
+    localtime_r(iot_now(), &time_info);
+
+    strftime(datetime_str, sizeof(datetime_str), "%Y-%m-%d %H:%M:%S", &time_info);
+
+    return datetime_str;
 }
 
 /**
@@ -145,7 +157,7 @@ const char *iot_now_str(void)
  *
  * @param[in] time A string representing time in the format "h hours m minutes s seconds".
  * @note Only hours, minutes, and seconds can be specified.
- * @return The time in microseconds, or 0 if the input is invalid.
+ * @return The time in milliseconds, or 0 if the input is invalid.
  */
 uint64_t iot_convert_time_to_ms(const char *time)
 {
@@ -204,4 +216,24 @@ void iot_hex_to_bytes(const char* hex_str, char* byte_array, size_t byte_array_s
 char *iot_char_s(const char *literal)
 {
     return const_cast<char *>(literal);
+}
+
+/**
+ * Deletes a task and queue.
+ * @param task_handle The handle of the task handle.
+ * @param queue_handle The handle of the queue to delete
+ *
+ * @note Null safe.
+ */
+void iot_delete_task_queue(TaskHandle_t &task_handle, QueueHandle_t &queue_handle)
+{
+    if (task_handle != nullptr) {
+        vTaskDelete(task_handle);
+        task_handle = nullptr;
+    }
+
+    if (queue_handle != nullptr) {
+        vQueueDelete(queue_handle);
+        queue_handle = nullptr;
+    }
 }

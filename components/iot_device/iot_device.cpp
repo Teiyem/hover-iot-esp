@@ -1,5 +1,8 @@
 #include "iot_device.h"
-#include "priv/iot_device_priv.h"
+
+#ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
+#include "iot_mqtt.h"
+#endif
 
 /**
  * Instance to the http server component.
@@ -20,13 +23,11 @@ IotDevice::IotDevice(void)
 }
 
 /**
- * Destructor for IotDevice class.
+ * Destroys the IotDevice class.
  */
 IotDevice::~IotDevice(void)
 {
-    delete _iot_server;
     free(_iot_device_cfg->device_info);
-    free(_iot_device_cfg);
 }
 
 /**
@@ -155,128 +156,92 @@ esp_err_t IotDevice::_register_route(const char *path, httpd_method_t method, es
  */
 esp_err_t IotDevice::on_info(httpd_req_t *req)
 {
-    IotDeviceInfo info_pb = IOT_DEVICE_INFO__INIT;
+    ESP_LOGI(TAG, "%s: Received request to get device information.", __func__ );
+
+    cJSON *root = cJSON_CreateObject();
+
     iot_device_info_t *info = _iot_device_cfg->device_info;
 
-    info_pb.uuid = iot_char_s("777YH7HUHUHUHUHUHUHUH");
-    info_pb.name = info->device_name.data();
-    info_pb.type = iot_device_type_to_str(info->device_type).data();
+    cJSON_AddStringToObject(root, "uuid", _iot_device_cfg->device_info->uuid.data());
+    cJSON_AddStringToObject(root, "name", info->device_name.data());
+    cJSON_AddStringToObject(root, "type", iot_device_type_to_str(info->device_type).data());
 
-    info_pb.n_attributes = info->attributes.size();
-    info_pb.attributes = iot_allocate_mem<IotAttribute *>(sizeof(IotAttribute *) * info_pb.n_attributes);
+    cJSON *attributes = cJSON_AddArrayToObject(root, "attributes");
 
-    ESP_LOGI(TAG, "%s: Attributes size %d", __func__, info_pb.n_attributes);
+    ESP_LOGI(TAG, "%s: Attributes size %d", __func__, info->attributes.size());
 
-    for (int i = 0; i < info_pb.n_attributes; i++) {
-        IotAttribute *attribute_pb = iot_allocate_mem<IotAttribute>(sizeof(IotAttribute));
-        *attribute_pb = IOT_ATTRIBUTE__INIT;
-
-        IotValue *value = iot_allocate_mem<IotValue>(sizeof(IotValue));
-        *value = IOT_VALUE__INIT;
+    for (int i = 0; i < info->attributes.size(); i++) {
 
         iot_attribute_t attribute = info->attributes[i];
 
-        attribute_pb->name = attribute.name.data();
-        attribute_pb->is_primary = attribute.is_primary;
+        cJSON *j_attribute = cJSON_CreateObject();
 
-        esp_err_t ret = iot_val_to_proto_val(attribute.value, value);
+        cJSON_AddStringToObject(j_attribute, "name", attribute.name.data());
+
+        esp_err_t ret = iot_val_add_to_json(j_attribute, attribute.value);
 
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "%s: Attribute [name: %s value: %d] has invalid value", __func__, attribute_pb->name,
-                     attribute.value.type);
             continue;
         }
 
-        attribute_pb->value = value;
+        cJSON_AddBoolToObject(j_attribute, "is_primary", attribute.is_primary);
 
-        ESP_LOGD(TAG, "%s: Adding attribute [name: %s type: %d] to response", __func__, attribute_pb->name, attribute_pb->value->type_case);
+        if (attribute.params.size() > 0) {
+            cJSON *parameters = cJSON_AddArrayToObject(j_attribute, "parameters");
 
-        attribute_pb->n_params = attribute.params.size();
+            for (int j = 0; j < attribute.params.size(); j++) {
+                cJSON *j_param = cJSON_CreateObject();
+                iot_param_t param = info->attributes[i].params[j];
 
-        if (attribute_pb->n_params > 0) {
-            attribute_pb->params = iot_allocate_mem<IotAttribute__ParamsEntry *>(
-                    sizeof(IotAttribute__ParamsEntry *) * attribute_pb->n_params);
+                cJSON_AddStringToObject(j_param, "key", param.key.c_str());
 
-            for (int j = 0; j < attribute_pb->n_params; j++) {
-                IotAttribute__ParamsEntry *entry = iot_allocate_mem<IotAttribute__ParamsEntry>(sizeof(IotAttribute__ParamsEntry));
-                *entry = IOT_ATTRIBUTE__PARAMS_ENTRY__INIT;
-
-                IotValue *param_value = iot_allocate_mem<IotValue>(sizeof(IotValue));
-                *param_value = IOT_VALUE__INIT;
-
-                iot_param_t param = attribute.params[j];
-                entry->key = strdup(param.key.c_str());
-                entry->value = param_value;
-
-                ret = iot_val_to_proto_val(param.value, entry->value);
+                ret = iot_val_add_to_json(j_param, param.value);
 
                 if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "%s: Attribute param [key: %s value: %d] has invalid value", __func__, param.key.c_str(),
-                             param.value.type);
                     continue;
                 }
 
-                ESP_LOGD(TAG, "%s: Adding attribute param [key: %s , type: %d] to response", __func__, entry->key, entry->value->type_case);
-
-                attribute_pb->params[j] = entry;
-
+                cJSON_AddItemToArray(parameters, j_param);
             }
-        } else {
-            attribute_pb->n_params = 0;
-            attribute_pb->params = nullptr;
         }
 
-        info_pb.attributes[i] = attribute_pb;
+        cJSON_AddItemToArray(attributes, j_attribute);
     }
 
-    info_pb.n_services = info->services.size();
-    info_pb.services = iot_allocate_mem<IotService *>(sizeof(IotService *) * info_pb.n_services);
+    cJSON *services = cJSON_AddArrayToObject(root,"services");
 
-    for (int i = 0; i < info_pb.n_services; i++) {
-        static IotService service = IOT_SERVICE__INIT;
+    for (int i = 0; i < info->services.size(); i++) {
+        cJSON  *service = cJSON_CreateObject();
 
-        service.name = info->services[i].name.data();
-        service.enabled = info->services[i].enabled;
-        service.is_core_service = info->services[i].core_service;
+        cJSON_AddStringToObject(service, "name",info->services[i].name.data());
+        cJSON_AddBoolToObject(service, "enabled",info->services[i].enabled);
+        cJSON_AddBoolToObject(service, "core_service",info->services[i].core_service);
 
-        ESP_LOGD(TAG, "%s: Adding service [name: %s ] to response", __func__, service.name);
+        ESP_LOGD(TAG, "%s: Adding service [name: %s ] to response", __func__, info->services[i].name.data());
 
-        info_pb.services[i] = &service;
+        cJSON_AddItemToArray(services, service);
     }
 
-    IotMetadata metadata = IOT_METADATA__INIT;
+    cJSON *metadata = cJSON_AddObjectToObject(root, "metadata");
 
-    metadata.mac_address = info->metadata.mac_address.data();
-    metadata.last_updated = info->metadata.last_updated.data();
-    metadata.model = info->metadata.model.data();
-    metadata.firmware_version = info->metadata.version.data();
+    cJSON_AddStringToObject(metadata, "mac_address",info->metadata.mac_address.data());
+    cJSON_AddStringToObject(metadata, "last_updated",info->metadata.last_updated.data());
+    cJSON_AddStringToObject(metadata, "model",info->metadata.model.data());
+    cJSON_AddStringToObject(metadata, "version",info->metadata.version.data());
 
-    ESP_LOGD(TAG, "%s: Adding metadata [mac_address: %s ] to response", __func__, metadata.mac_address);
-    ESP_LOGD(TAG, "%s: Adding metadata [last_updated: %s ] to response", __func__, metadata.last_updated);
-    ESP_LOGD(TAG, "%s: Adding metadata [model: %s ] to response", __func__, metadata.model);
-    ESP_LOGD(TAG, "%s: Adding metadata [version: %s ] to response", __func__, metadata.firmware_version);
-
-    info_pb.metadata = &metadata;
-
-    size_t proto_size = iot_device_info__get_packed_size(&info_pb);
-
-    uint8_t *buf = iot_allocate_mem<uint8_t>(proto_size);
+    char *buf = cJSON_Print(root);
 
     if (buf == nullptr) {
-        iot_device_info_proto_free(buf, info_pb);
-        return ESP_ERR_NO_MEM;
+        return _iot_server->send_err(req, IOT_HTTP_SERIALIZATION_ERR);
     }
 
-    iot_device_info__pack(&info_pb, buf);
+    esp_err_t ret = _iot_server->send_res(req, buf);
 
-    esp_err_t ret = _iot_server->send_res(req, reinterpret_cast<const char *>(buf), proto_size);
-
-    iot_device_info_proto_free(buf, info_pb);
+    iot_free(buf);
+    cJSON_Delete(root);
 
     if (ret != ESP_OK)
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to send HTTP response")
-        ));
+        return _iot_server->send_err(req,"Failed to send HTTP response");
 
     return ESP_OK;
 }
@@ -289,44 +254,40 @@ esp_err_t IotDevice::on_info(httpd_req_t *req)
  */
 esp_err_t IotDevice::on_write(httpd_req_t *req)
 {
-    size_t buf_len = req->content_len;
+    size_t buf_len = req->content_len + 1;
 
     char *buf = iot_allocate_mem<char>(buf_len);
 
     if (buf == nullptr)
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to create object")));
+        return _iot_server->send_err(req, "Failed to create object");
 
-    esp_err_t ret = _iot_server->get_payload(req, buf, buf_len);
+    esp_err_t ret = _iot_server->get_body(req, buf, buf_len);
 
     if (ret != ESP_OK) {
-        free(buf);
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to get payload")));
+        iot_free(buf);
+        return _iot_server->send_err(req, "Failed to get request body");
     }
 
     iot_attribute_req_param_t data;
 
-    ret = iot_ctl_write_from_proto(buf, buf_len, &data);
+    ret = iot_attribute_req_from_json(buf, &data);
 
-    free(buf);
+    iot_free(buf);
 
     if (ret == ESP_FAIL || ret == ESP_ERR_INVALID_ARG)
-        return _iot_server->send_err(req, iot_error_response_create_proto(ret == ESP_ERR_INVALID_ARG ?
-                                                                          HTTPD_500_INTERNAL_SERVER_ERROR
-                                                                                                     : HTTPD_400_BAD_REQUEST,
-                                                                          iot_char_s("Failed to write attributes")));
+        return _iot_server->send_err(req, IOT_HTTP_DESERIALIZATION_ERR, ret == ESP_FAIL ?
+                                                                        IOT_HTTP_STATUS_500_INT_SERVER_ERROR
+                                                                                                     : IOT_HTTP_STATUS_400_BAD_REQUEST);
 
     ret = _iot_device_cfg->write_cb(&data);
 
     if (ret != ESP_OK)
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to write attributes")));
+        return _iot_server->send_err(req, "Failed to write attributes");
 
-    ret = _iot_server->send_res(req, nullptr, 0);
+    ret = _iot_server->send_res(req, "Write Successful", true);
 
     if (ret != ESP_OK)
-        return _iot_server->send_err(req, iot_error_response_create_proto(HTTPD_500_INTERNAL_SERVER_ERROR, nullptr));
+        return _iot_server->send_err(req, nullptr);
 
     return ESP_OK;
 }
@@ -339,138 +300,149 @@ esp_err_t IotDevice::on_write(httpd_req_t *req)
  */
 esp_err_t IotDevice::on_read(httpd_req_t *req)
 {
-    std::string attribute = _iot_server->get_path_param(req, "attributes/");
+    ESP_LOGI(TAG, "%s: Received request to read attribute", __func__ );
+
+    std::string name = _iot_server->get_path_param(req, "attributes/");
 
     iot_attribute_req_data_t data = {};
     iot_attribute_req_param_t param = {};
 
-    if (attribute.empty()) {
+    if (name.empty()) {
         if (_iot_device_cfg != nullptr) {
             for (const auto &item: _iot_device_cfg->device_info->attributes)
                 param.attributes.push_back(iot_attribute_create_read_req_data(item.name));
         }
     } else
-        param.attributes.push_back(iot_attribute_create_read_req_data(attribute));
+        param.attributes.push_back(iot_attribute_create_read_req_data(name));
 
     esp_err_t ret = _iot_device_cfg->read_cb(&param);
 
     if (ret != ESP_OK) {
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to read attributes")));
+        return _iot_server->send_err(req,"Failed to read attributes");
     }
 
-    IotAttributeResponse *res = nullptr;
+    cJSON *response = cJSON_CreateArray();
 
-    ret = iot_attribute_res_proto_from_req_data(&data, &res);
+    for (const auto &item: param.attributes) {
+        cJSON *attribute = cJSON_CreateObject();
 
-    if (ret != ESP_OK)
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to proto message")));
+        cJSON_AddStringToObject(attribute, "name", item.name.c_str());
 
-    size_t proto_size = iot_attribute_response__get_packed_size(res);
+        ret = iot_val_add_to_json(attribute, item.value);
 
-    char *buf = iot_allocate_mem<char>(proto_size);
+        if (ret != ESP_OK)
+            return _iot_server->send_err(req,IOT_HTTP_SERIALIZATION_ERR);
 
-    if (buf == nullptr) {
-        return ESP_ERR_NO_MEM;
+        cJSON_AddItemToArray(response, attribute);
     }
 
-    iot_attribute_response__pack(res, reinterpret_cast<uint8_t *>(*buf));
+    char *buf = cJSON_Print(response);
 
-    ret = _iot_server->send_res(req, buf, proto_size);
+    if (buf == nullptr)
+        return _iot_server->send_err(req, "Failed to create json");
 
-    free(buf);
+    ret = _iot_server->send_res(req, buf, 0);
+
+    iot_free(buf);
+    cJSON_Delete(response);
 
     if (ret != ESP_OK)
-        return _iot_server->send_err(req, iot_error_response_create_proto(
-                HTTPD_500_INTERNAL_SERVER_ERROR, iot_char_s("Failed to send HTTP response")));
+        return _iot_server->send_err(req, "Failed to send http response");
 
     return ESP_OK;
 }
 
 /**
- * Converts a protobuf message to an attribute ctl data struct.
+ * Deserializes the attribute write request json to an attribute ctl data struct.
  *
- * @param[in] buf A point ot the protobuf message buffer to convert.
- * @param[out] data A pointer to the iot attribute ctl data to convert to.
+ * @param[in] buf A point ot the json to deserialize.
+ * @param[out] data A pointer to the iot attribute ctl data.
  * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t IotDevice::iot_ctl_write_from_proto(char *buf, size_t buf_len, iot_attribute_req_param_t *param)
+esp_err_t IotDevice::iot_attribute_req_from_json(char *buf, iot_attribute_req_param_t *param)
 {
     ESP_LOGI(TAG, "%s: Parsing attribute write data", __func__);
 
-    IotAttributeWriteRequest *request = iot_attribute_write_request__unpack(
-            nullptr, buf_len, reinterpret_cast<const uint8_t *>(buf));
+    cJSON *root = cJSON_Parse(buf);
 
-    if (request == nullptr) {
-        ESP_LOGE(TAG, "%s: Failed to parse request data", __func__);
+    if (root == nullptr) {
+        ESP_LOGE(TAG, "%s: Failed to deserialize request data, [reason: %s]", __func__, cJSON_GetErrorPtr());
         return ESP_FAIL;
     }
 
     std::vector<iot_attribute_req_data_t> attributes;
 
-    for (size_t i = 0; i < request->n_attributes; ++i) {
-        IotAttributeData *data = request->attributes[i];
+    int count = cJSON_GetArraySize(root);
 
-        iot_val_type val_type;
+    if (count == 0) {
+        ESP_LOGE(TAG, "%s: Request contains zero attribute write data", __func__);
+        cJSON_free(root);
+        return ESP_ERR_INVALID_ARG;
+    }
 
-        if (data->value->type_case == IOT_VALUE__TYPE_BOOL_VALUE) { val_type = IOT_VAL_TYPE_BOOLEAN; }
-        else if (data->value->type_case == IOT_VALUE__TYPE_INT_VALUE) { val_type = IOT_VAL_TYPE_INTEGER; }
-        else if (data->value->type_case == IOT_VALUE__TYPE_FLOAT_VALUE) { val_type = IOT_VAL_TYPE_FLOAT; }
-        else if (data->value->type_case == IOT_VALUE__TYPE_STRING_VALUE) { val_type = IOT_VAL_TYPE_STRING; }
-        else { val_type = IOT_VAL_TYPE_INVALID; }
+    ESP_LOGI(TAG, "%s: Found attributes [count: %d]", __func__, count);
 
-        if (val_type == IOT_VAL_TYPE_INVALID) {
-            iot_attribute_write_request__free_unpacked(request, nullptr);
-            return ESP_ERR_INVALID_ARG;
-        }
+    iot_zero_mem(param, sizeof(iot_attribute_req_param_t));
 
-        iot_attribute_req_data_t attribute = iot_attribute_req_data_t(data->name, {});
+    for (size_t i = 0; i < count; ++i) {
+        cJSON *item = cJSON_GetArrayItem(root, i);
 
-        iot_val_t val;
-
-        switch (val_type) {
-            case IOT_VAL_TYPE_BOOLEAN:
-                val.b = data->value->bool_value;
-                val.type = val_type;
-                val.is_null = false;
-                break;
-            case IOT_VAL_TYPE_INTEGER:
-                val.i = data->value->int_value;
-                val.type = val_type;
-                val.is_null = false;
-                break;
-            case IOT_VAL_TYPE_FLOAT:
-                val.f = data->value->float_value;
-                val.type = val_type;
-                val.is_null = false;
-                break;
-            case IOT_VAL_TYPE_LONG:
-                val.l = data->value->long_value;
-                val.type = val_type;
-                val.is_null = false;
-                break;
-            case IOT_VAL_TYPE_STRING:
-                val.s = data->value->string_value;
-                val.type = val_type;
-                val.is_null = false;
-                break;
-            default:
-                val.is_null = true;
-                break;
-        }
-
-        if (attribute.value.is_null) {
-            ESP_LOGE(TAG, "%s: Attribute value is invalid", __func__);
-            iot_attribute_write_request__free_unpacked(request, nullptr);
+        if (item == nullptr) {
+            ESP_LOGE(TAG, "%s: Failed to read attribute from array[reason: %s]", __func__, cJSON_GetErrorPtr());
+            cJSON_free(root);
             return ESP_FAIL;
         }
 
-        attribute.value = val;
+        cJSON *item_name = cJSON_GetObjectItem(item, "name");
+        cJSON *item_value = cJSON_GetObjectItem(item, "value");
+        cJSON *item_type = cJSON_GetObjectItem(item, "type");
+
+        if (item_name == nullptr || item_value == nullptr || item_type == nullptr) {
+            ESP_LOGE(TAG, "%s: Attribute data is missing, [name: %d, value: %d, type: %d]", __func__,
+                     item_value != nullptr, item_value != nullptr, item_type != nullptr);
+            cJSON_free(root);
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        std::string name = item_name->string;
+        std::string type = item_type->valuestring;
+
+        ESP_LOGI(TAG, "%s: Reading attribute [name: %s, type: %s]", __func__, name.data(), type.data());
+
+        iot_attribute_req_data_t attribute = {.name = item_name->valuestring, .value = {}};
+
+        iot_val_t val;
+        val.is_null = false;
+
+        if (type == IOT_VAL_TYPE_BOOLEAN_STR) {
+            val.type = IOT_VAL_TYPE_BOOLEAN;
+            val.b =  (bool)item_value->valueint;
+        } else if (type == IOT_VAL_TYPE_INTEGER_STR) {
+            val.type = IOT_VAL_TYPE_INTEGER;
+            val.i = item_value->valueint;
+        } else if (type == IOT_VAL_TYPE_LONG_STR) {
+            val.type = IOT_VAL_TYPE_LONG;
+            val.l = item_value->valueint;
+        } else if (type == IOT_VAL_TYPE_FLOAT_STR) {
+            val.type = IOT_VAL_TYPE_FLOAT;
+            val.i = (float)item_value->valuedouble;
+        } else if (type == IOT_VAL_TYPE_STRING_STR) {
+            val.type = IOT_VAL_TYPE_STRING;
+            val.s = strdup(item_value->valuestring);
+        } else {
+            ESP_LOGE(TAG, "%s: Received invalid value type", __func__);
+            val.type = IOT_VAL_TYPE_INVALID;
+        }
+
+        if (val.type == IOT_VAL_TYPE_INVALID) {
+            cJSON_free(root);
+            return ESP_ERR_INVALID_ARG;
+        }
+
         attributes.push_back(attribute);
     }
 
-    iot_attribute_write_request__free_unpacked(request, nullptr);
+    cJSON_free(root);
 
     param->attributes = attributes;
 
@@ -516,3 +488,38 @@ std::string IotDevice::iot_device_type_to_str(iot_device_type_t type)
             return "Other";
     }
 }
+
+#ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
+
+/**
+ * Gets whether the device is subscribed to an mqtt topic.
+ * @return true if subscribed otherwise false.
+ */
+bool IotDevice::subscribed_to_mqtt() const
+{
+    return _mqtt_subscribed;
+}
+
+/**
+ * Subscribes to mqtt.
+ */
+void IotDevice::subscribe_to_mqtt()
+{
+    auto *mqtt = &IotFactory::create_component<IotMqtt>();
+
+    iot_mqtt_subscribe_t subscribe = {
+        .topic =  "hover/iot/device/" + _iot_device_cfg->device_info->metadata.mac_address  + "/attribute/",
+        .cb = on_data
+    };
+
+    esp_err_t ret = mqtt->subscribe(subscribe);
+
+    _mqtt_subscribed = ret == ESP_OK;
+}
+
+void IotDevice::on_data(std::string topic, std::string data, size_t len, void *priv_data)
+{
+    ESP_LOGI(TAG, "%s: Received mqtt message [topic: %s, data: %s, len: %d]", __func__, topic.data(), data.data(), len);
+}
+
+#endif

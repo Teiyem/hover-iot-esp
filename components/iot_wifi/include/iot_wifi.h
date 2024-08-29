@@ -12,6 +12,9 @@
 #include "iot_storage.h"
 #include "lwip/apps/netbiosns.h"
 #include "iot_component.h"
+#include "iot_defs.h"
+#include "iot_event_dispatcher.h"
+
 /**
  * A class for handling network related tasks.
  */
@@ -26,10 +29,9 @@ public:
     IotWifi& operator=(const IotWifi&) = delete;
     IotWifi& operator=(IotWifi&&) = delete;
 
-    void start() override;
+    esp_err_t start() override;
     void stop() override;
     esp_err_t init_mdns(std::string device_name);
-    void set_callback(std::function<void(iot_wifi_message_e)> evt_cb);
     [[maybe_unused]] bool connected();
     bool configured();
     [[nodiscard]] char *get_mac();
@@ -46,7 +48,6 @@ private:
     static bool _reconnecting;
     static uint8_t _retries;
     static wifi_init_config_t _wifi_config;
-    static std::function<void(iot_wifi_message_e)> _evt_cb;
     static QueueHandle_t _queue_handle;
     static TaskHandle_t _task_handle;
 
@@ -59,8 +60,8 @@ private:
     static void init_default_config();
     static void on_event(void *args, esp_event_base_t base, int32_t id, void *data);
     static BaseType_t send_to_queue(iot_wifi_message_e msg);
-    [[noreturn]] static void runner(void *param);
+    [[noreturn]] static void task(void *param);
 
-    void process_message(iot_base_message_e msg_id);
+    void process_message(iot_wifi_message_e msg);
     void on_state_changed(bool connected);
 };

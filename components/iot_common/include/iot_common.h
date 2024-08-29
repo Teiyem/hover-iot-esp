@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string>
 #include <string.h>
-#include <chrono>
 #include <time.h>
 #include "esp_log.h"
 #include "esp_err.h"
@@ -29,12 +28,12 @@ void iot_zero_mem(void *ptr, size_t size);
 template <typename T>
 T *iot_allocate_mem(size_t size)
 {
-    ESP_LOGI("IotCommon", "%s: Allocating memory for buffer with size -> %d", __func__, size);
+    ESP_LOGI("IotCommon", "%s: Allocating memory for buffer [size: %d]", __func__, size);
 
     T *ptr = static_cast<T *>(malloc(size));
 
     if (ptr == nullptr)
-        ESP_LOGE("IotCommon", "%s: Failed to allocate memory for buffer with size -> %d", __func__, size);
+        ESP_LOGE("IotCommon", "%s: Failed to allocate memory for buffer [size: %d]", __func__, size);
     else
         iot_zero_mem(ptr, size);
 
@@ -81,8 +80,10 @@ void iot_free(Args ...args)
     (iot_free_one(args), ...);
 }
 
-std::chrono::_V2::system_clock::time_point iot_now(void);
-const char *iot_now_str(void);
+void iot_delete_task_queue(TaskHandle_t &task_handle, QueueHandle_t &queue_handle);
+
+const time_t *iot_now(void);
+std::string iot_now_str(void);
 uint64_t iot_convert_time_to_ms(const char *time);
 unsigned long IRAM_ATTR iot_millis();
 void iot_hex_to_bytes(const char* hex_str, char* byte_array, size_t byte_array_size);

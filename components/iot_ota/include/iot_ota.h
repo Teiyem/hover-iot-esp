@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstring>
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_http_client.h"
@@ -16,8 +15,7 @@ class IotOta final
 {
 public:
     IotOta(void);
-    ~IotOta(void);
-    esp_err_t init(void);
+    esp_err_t init(esp_app_desc_t *app_desc);
 
 private:
     static constexpr const char *TAG = "IotOta";         /**< A constant used to identify the source of the log message of this class. */

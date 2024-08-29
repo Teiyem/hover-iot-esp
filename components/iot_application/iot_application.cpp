@@ -7,13 +7,13 @@ bool IotApplication::_first_connection{true};
 iot_app_state_e IotApplication::_app_state{iot_app_state_e::INITIAL};
 
 /** The component used for provisioning.*/
-IotProvision *IotApplication::iot_provision{nullptr};
+IotProvision *IotApplication::_iot_provision{nullptr};
 
 /** The device component.*/
 IotDevice *IotApplication::_iot_device{nullptr};
 
-/** The semaphore used to safe guard calls to reboot. */
-SemaphoreHandle_t IotApplication::_semaphore{nullptr};
+/** The mutex used to safe guard calls to reboot. */
+std::mutex IotApplication::_reboot_mutex{};
 
 /** The application component's queue handle. */
 QueueHandle_t IotApplication::_queue_handle{};
@@ -42,15 +42,11 @@ IotApplication::IotApplication(void)
 }
 
 /**
- * Destructor for IotApplication class.
+ * Destroys the IotApplication class.
  */
 IotApplication::~IotApplication(void)
 {
-    delete _iot_wifi;
-    delete iot_provision;
-    delete _iot_device;
-    delete _iot_ota;
-    vSemaphoreDelete(_semaphore);
+    stop();
 }
 
 /**
@@ -62,13 +58,13 @@ void IotApplication::start(iot_app_cfg_t config)
 {
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    ESP_LOGI(TAG, "%s: Starting component", __func__);
+    ESP_LOGI(TAG, "%s: Starting component %s", __func__, iot_now_str().data());
 
     esp_err_t ret = nvs_flash_init();
 
     _iot_status_led->start();
     _iot_status_led->toggle(true);
-    _iot_status_led->set_mode(IOT_SLOW_BLINK);
+    _iot_status_led->set_mode(IOT_LED_SLOW_BLINK);
 
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -85,17 +81,8 @@ void IotApplication::start(iot_app_cfg_t config)
         return;
     }
 
-    _semaphore = xSemaphoreCreateBinary();
-
-    if (_semaphore == nullptr) {
-        ESP_LOGE(TAG, "%s: Failed to create semaphore out of memory ...aborting", __func__);
-        reboot(0);
-        return;
-    }
-
-    _iot_wifi->set_callback([this](iot_wifi_message_e msg) {
-        on_wifi_event(msg);
-    });
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IOT_EVENT, ESP_EVENT_ANY_ID, &on_event,
+                                                        this, nullptr));
 
     _iot_wifi->start();
 
@@ -103,12 +90,9 @@ void IotApplication::start(iot_app_cfg_t config)
         ESP_LOGI(TAG, "%s: WiFi is not configured yet.", __func__);
         _app_state = iot_app_state_e::CONFIGURING;
 
-        iot_provision = new IotProvision();
-        iot_provision->set_callback([this](iot_prov_message_e msg) {
-            on_prov_event(msg);
-        });
+        _iot_provision = new IotProvision();
 
-        iot_provision->start();
+        _iot_provision->start();
     } else {
         iot_zero_mem(&_device_data, sizeof(iot_device_data_t));
 
@@ -120,7 +104,7 @@ void IotApplication::start(iot_app_cfg_t config)
             ESP_LOGE(TAG, "%s: Failed to load application data [reason: %s]", __func__, esp_err_to_name(ret));
 
             strncpy(_device_data.name, strcat(iot_char_s(("hover.")), _iot_wifi->get_mac()), IOT_MAX_ANY_NAME_LEN);
-            strcpy(_device_data.uuid, "");
+            strcpy(_device_data.uuid, _iot_wifi->get_mac());
         }
 
         _init(config);
@@ -129,6 +113,31 @@ void IotApplication::start(iot_app_cfg_t config)
     xTaskCreatePinnedToCore(&task, "iot_app_task", 6096, this, 4, nullptr, 1);
 
     ESP_LOGI(TAG, "%s: Component started successfully", __func__);
+}
+
+/**
+ * Stops the component
+ */
+void IotApplication::stop()
+{
+    esp_event_handler_unregister(IOT_EVENT, ESP_EVENT_ANY_ID, &on_event);
+
+    delete _iot_wifi;
+
+    if (_iot_provision != nullptr) {
+        delete _iot_provision;
+    }
+
+    delete _iot_device;
+
+    if (_iot_ota != nullptr) {
+        delete _iot_ota;
+    }
+
+    delete _iot_status_led;
+
+    vQueueDelete(_queue_handle);
+    _queue_handle = nullptr;
 }
 
 /**
@@ -144,14 +153,18 @@ void IotApplication::_init(iot_app_cfg_t config)
     char *mac_address = _iot_wifi->get_mac();
 
     server->register_route("reboot", HTTP_GET, [](httpd_req_t *req) -> esp_err_t {
-        httpd_resp_sendstr(req, "Rebooting in 5 seconds");
-        IotApp.reboot(iot_convert_time_to_ms("5s"));
+        iot_event_request_reboot_t  reboot;
+        iot_event_queue_t event = {.id = IOT_APP_REQUEST_REBOOT_EVENT, .data = &reboot};
+        send_to_queue(event);
+        httpd_resp_sendstr(req, "Device will reboot");
         return ESP_OK;
     });
 
     _iot_wifi->init_mdns(_device_data.name);
 
     server->set_auth(_device_data.uuid);
+
+    _components.push_back(server);
 
     iot_device_meta_t meta = iot_device_meta_t(mac_address, config.model, _app_desc->version,
                                                _app_desc->date);
@@ -160,17 +173,18 @@ void IotApplication::_init(iot_app_cfg_t config)
 
     device->device_info->device_name = _device_data.name;
     device->device_info->metadata = meta;
+    device->device_info->uuid = _device_data.uuid;
 
     for (const auto &service: device->device_info->services) {
         if (service.name == IOT_DEVICE_OTA_SERVICE) {
             if (service.enabled) {
                 _iot_ota = new IotOta();
-                _iot_ota->init();
+                _iot_ota->init(const_cast<esp_app_desc_t *>(_app_desc));
             }
         }
     }
 
-    _iot_device->init(config.device_cfg);
+    _iot_device->init(std::move(config.device_cfg));
 }
 
 /**
@@ -180,7 +194,7 @@ void IotApplication::_init(iot_app_cfg_t config)
  */
 void IotApplication::reboot(uint64_t delay)
 {
-    xSemaphoreTake(_semaphore, portMAX_DELAY);
+    std::lock_guard<std::mutex> lock(_reboot_mutex);
 
     ESP_LOGI(TAG, "%s: Request to reboot in [time: %llu]", __func__, delay);
 
@@ -190,8 +204,6 @@ void IotApplication::reboot(uint64_t delay)
         _restart_delay = delay;
         _app_state = iot_app_state_e::REBOOTING;
     }
-
-    xSemaphoreGive(_semaphore);
 }
 
 /**
@@ -203,63 +215,12 @@ void IotApplication::set_default_log_levels(void)
     esp_log_level_set("wifi", ESP_LOG_NONE);
     esp_log_level_set("Iot", ESP_LOG_INFO);
 #elif CONFIG_IOT_HOVER_ENV_DEV
-    esp_log_level_set("wifi", ESP_LOG_INFO);
+    esp_log_level_set("wifi", ESP_LOG_NONE);
     esp_log_level_set("esp_netif_lwip", ESP_LOG_INFO);
     esp_log_level_set("mdns", ESP_LOG_INFO);
     esp_log_level_set("event:", ESP_LOG_INFO);
     esp_log_level_set("Iot", ESP_LOG_VERBOSE);
 #endif
-}
-
-/**
- * Callback handler for iot wifi events.
- *
- * @param[in] msg The wifi event message.
- */
-void IotApplication::on_wifi_event(iot_wifi_message_e msg)
-{
-    switch (msg) {
-        case IOT_WIFI_MSG_CONNECTED:
-            send_to_queue(IOT_APP_MSG_WIFI_CONNECT_OK);
-            break;
-        case IOT_WIFI_MSG_DISCONNECTED:
-            send_to_queue(IOT_APP_MSG_WIFI_DISCONNECT);
-            break;
-        case IOT_WIFI_MSG_CONNECT_FAILED:
-            send_to_queue(IOT_APP_MSG_WIFI_DISCONNECT);
-            break;
-        case IOT_WIFI_MSG_RECONNECTING:
-            send_to_queue(IOT_APP_MSG_WIFI_DISCONNECT);
-            break;
-        case IOT_WIFI_MSG_RECONNECTING_FAIL:
-            send_to_queue(IOT_APP_MSG_WIFI_DISCONNECT);
-            break;
-        default:
-            break;
-    }
-}
-
-/**
- * Callback handler for iot provision events.
- *
- * @param[in] msg The provision event message.
- */
-void IotApplication::on_prov_event(iot_prov_message_e msg)
-{
-    switch (msg) {
-
-        case IOT_PROV_MSG_STARTED:
-            send_to_queue(IOT_APP_MSG_PROV_START);
-            break;
-        case IOT_PROV_MSG_FINISHED:
-            send_to_queue(IOT_APP_MSG_PROV_OK);
-            break;
-        case IOT_PROV_MSG_FAIL:
-            send_to_queue(IOT_APP_MSG_PROV_FAIL);
-            break;
-        default:
-            break;
-    }
 }
 
 /**
@@ -286,15 +247,33 @@ void IotApplication::init_sntp(char *timezone)
 }
 
 /**
+ * Handles application related events.
+ *
+ * @param[in] args A pointer to the user data.
+ * @param[in] base The event base for the handler.
+ * @param[in] id The id of the received event.
+ * @param[in] data A pointer to the event data.
+ */
+void IotApplication::on_event([[maybe_unused]] void *args, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base == IOT_EVENT)  {
+        iot_event_queue_t message = {.id = static_cast<iot_app_event_e>(id), .data = data};
+        send_to_queue(message);
+    }
+}
+
+/**
  * Callback handler for time synchronization notifications, Sets the device's time to.
  *
  * @param[in] tv A pointer to the time received from the server.
  */
 void IotApplication::on_sntp_update(timeval *tv)
 {
-    ESP_LOGI(TAG, "%s: Current [time: %s]", __func__, iot_now_str());
+    ESP_LOGI(TAG, "%s: Current [time: %s]", __func__, iot_now_str().data());
     settimeofday(tv, nullptr);
     sntp_set_sync_status(SNTP_SYNC_STATUS_COMPLETED);
+
+;
 }
 
 /**
@@ -303,7 +282,7 @@ void IotApplication::on_sntp_update(timeval *tv)
  * @param[in] msg The message to send.
  * @return pdTrue on success, otherwise pdFALSE.
  */
-BaseType_t IotApplication::send_to_queue(iot_app_message_e msg)
+BaseType_t IotApplication::send_to_queue(iot_event_queue_t msg)
 {
     return xQueueSend(_queue_handle, &msg, portMAX_DELAY);
 }
@@ -313,115 +292,140 @@ BaseType_t IotApplication::send_to_queue(iot_app_message_e msg)
  *
  * @param[in] param A pointer to the task parameter (this).
  */
-IRAM_ATTR [[noreturn]] void IotApplication::task(void *param)
+[[noreturn]] IRAM_ATTR void IotApplication::task(void *param)
 {
     size_t heap_size = heap_caps_get_total_size(MALLOC_CAP_8BIT);
 
-    ESP_LOGI(TAG, "%s -> Task started running, current total heap -> %u", __func__, heap_size);
+    ESP_LOGI(TAG, "%s: Task started running, current total heap [size: %u]", __func__, heap_size);
 
     auto *self = static_cast<IotApplication *>(param);
 
     if (self == nullptr)
         esp_system_abort("Pointer to iot app is null, Did you forget to pass it as a param to the task ?");
 
-    iot_app_message_e msg;
+    iot_event_queue_t event;
+
+    static uint32_t last_check = 0;
 
     while (true) {
-        size_t heap_free_size = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-
-        size_t heap_usage = heap_size - heap_free_size;
-
-        ESP_LOGI(TAG, "%s -> Task heap usage -> %u bytes", __func__, heap_usage);
 
         if (_app_state == iot_app_state_e::REBOOTING) {
             ESP_LOGI(TAG, "%s: Rebooting device............", __func__);
 
+            vTaskDelay(pdMS_TO_TICKS(150));
+
             for (const auto &component: self->_components) {
                 component->stop();
+                vTaskDelay(pdMS_TO_TICKS(150));
             }
 
-            vTaskDelay(_restart_delay / portTICK_PERIOD_MS);
+            if (_restart_delay != 0 || _restart_delay > 400 ) {
+                _restart_delay -= 300;
+            }
+
+            self->stop();
+            vTaskDelay(pdMS_TO_TICKS(_restart_delay));
             esp_restart();
         }
 
-        if (xQueueReceive(_queue_handle, &msg, portMAX_DELAY) == pdTRUE)
-            self->process_message(msg);
+        if (xQueueReceive(_queue_handle, &event, pdMS_TO_TICKS(1000)) == pdTRUE)
+            self->process_event(event);
+
+        if (iot_millis() - last_check > 10000) {
+            last_check = iot_millis();
+            size_t heap_free_size = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+            size_t heap_usage = heap_size - heap_free_size;
+
+            ESP_LOGI(TAG, "%s: Task heap [usage: %u bytes]", __func__, heap_usage);
+            ESP_LOGI(TAG, "%s: Task high stack [water mark: %d bytes]", __func__, uxTaskGetStackHighWaterMark(NULL));
+        }
     }
 }
 
 /**
- * Processes an iot application message.
+ * Processes the application event queue.
  *
- * @param[in] message The message to process.
+ * @param event The event to process.
  */
-void IotApplication::process_message(iot_base_message_e message)
+void IotApplication::process_event(iot_event_queue_t event)
 {
-    iot_app_message_e msg_id = static_cast<iot_app_message_e>(message);
+    ESP_LOGI(TAG, "%s: Processing event [id: %u]", __func__, event.id);
 
-    ESP_LOGI(TAG, "%s: Processing message [id: %u]", __func__, msg_id);
-
-    switch (msg_id) {
-        case IOT_APP_MSG_WIFI_CONNECT_OK:
+    switch (event.id) {
+        case IOT_APP_PROV_STARTED_EVENT:
+            _iot_status_led->set_mode(IOT_LED_FAST_BLINK);
+            break;
+        case IOT_APP_PROV_SUCCESS_EVENT:
+            _app_state = iot_app_state_e::CONFIGURED;
+            _iot_status_led->set_mode(IOT_LED_STATIC);
+            reboot(iot_convert_time_to_ms(IOT_REBOOT_SAFE_TIME));
+            break;
+        case IOT_APP_PROV_FAIL_EVENT:
+            reboot(0);
+            break;
+        case IOT_APP_WIFI_CONNECTED_EVENT:
             if (_app_state == iot_app_state_e::CONFIGURING)
                 return;
             on_connected();
             break;
-        case IOT_APP_MSG_WIFI_CONNECT_FAIL:
+        case IOT_APP_WIFI_CONNECTION_FAIL_EVENT:
             if (_app_state == iot_app_state_e::CONFIGURING) {
                 ESP_LOGI(TAG, "%s: Failed to connect, restarting", __func__);
                 reboot(0);
             }
             break;
-        case IOT_APP_MSG_WIFI_RECONNECT:
+        case IOT_APP_WIFI_RECONNECTING_EVENT:
             _app_state = iot_app_state_e::CONNECTING;
             break;
-        case IOT_APP_MSG_WIFI_RECONNECT_OK:
-            on_connected();
-            break;
-        case IOT_APP_MSG_WIFI_RECONNECT_FAIL:
+        case IOT_APP_WIFI_RECONNECTION_FAIL_EVENT:
             reboot(0);
             break;
-        case IOT_APP_MSG_WIFI_DISCONNECT:
-            _iot_status_led->set_mode(IOT_SLOW_BLINK);
+        case IOT_APP_WIFI_DISCONNECTED_EVENT:
+            _iot_status_led->set_mode(IOT_LED_SLOW_BLINK);
             _app_state = iot_app_state_e::CONNECTING;
             break;
-        case IOT_APP_MSG_PROV_START:
-            _iot_status_led->set_mode(IOT_SLOW_BLINK);
-            break;
-        case IOT_APP_MSG_PROV_OK:
-            _app_state = iot_app_state_e::CONFIGURED;
-            _iot_status_led->set_mode(IOT_STATIC);
-            reboot(iot_convert_time_to_ms("10s"));
-            break;
-        case IOT_APP_MSG_PROV_FAIL:
+        case IOT_APP_REQUEST_REBOOT_EVENT: {
+            iot_event_request_reboot_t *req = static_cast<iot_event_request_reboot_t *>(event.data);
 
+            uint64_t delay = req != nullptr ? req->delay : iot_convert_time_to_ms(IOT_REBOOT_SAFE_TIME);
+            reboot(delay);
             break;
-        case IOT_APP_MSG_OTA_UPDATE_OK:
-
+        }
+#ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
+        case IOT_APP_MQTT_CONNECTED_EVENT:
+            if (!_iot_device->subscribed_to_mqtt())
+                _iot_device->subscribe_to_mqtt();
             break;
-        case IOT_APP_MSG_OTA_UPDATE_FAIL:
-
+        case IOT_APP_MQTT_CONNECTION_FAIL_EVENT:
+            // TODO:
             break;
+        case IOT_APP_MQTT_DISCONNECTED_EVENT:
+            if(_iot_mqtt != nullptr && !_iot_mqtt->connected())
+                _iot_mqtt->reconnect();
+            break;
+#endif
         default:
+            ESP_LOGW(TAG, "Received unknown event [id: %u]", event.id);
             break;
     }
 }
 
 /**
- * Handles network connected.
+ * Handles network connected related functionalities.
  */
 void IotApplication::on_connected()
 {
+    _iot_status_led->set_mode(IOT_LED_STATIC);
+
     if (!_iot_status_led->state())
         _iot_status_led->toggle(true);
-
-    _iot_status_led->set_mode(IOT_STATIC);
 
     if (_first_connection) {
         init_sntp(_timezone);
 
 #ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
         _iot_mqtt = &IotFactory::create_component<IotMqtt>();
+
         _iot_mqtt->start(std::string(_device_data.name) + "_" + std::string(_iot_wifi->get_mac()));
 #endif
         _first_connection = false;
@@ -431,7 +435,7 @@ void IotApplication::on_connected()
         _app_state = iot_app_state_e::CONNECTED;
 
 #ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
-        if(_iot_mqtt != nullptr && !_iot_mqtt->is_connected())
+        if(_iot_mqtt != nullptr && !_iot_mqtt->connected())
             _iot_mqtt->reconnect();
 #endif
     }

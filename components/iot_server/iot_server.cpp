@@ -1,5 +1,8 @@
+#include <cJSON.h>
 #include "iot_server.h"
-#include "iot_common.pb-c.h"
+#include "iot_storage.h"
+
+std::string IotServer::_api_key{};
 
 /**
  * Initialises a new instance of the IotServer class.
@@ -7,7 +10,6 @@
 IotServer::IotServer(void)
 {
     _server = nullptr;
-    _iot_storage = new IotStorage(IOT_NVS_FACTORY_PART_NAME, IOT_NVS_FACTORY_NAMESPACE);
 }
 
 /**
@@ -15,8 +17,7 @@ IotServer::IotServer(void)
  */
 IotServer::~IotServer(void)
 {
-    if (_server != nullptr)
-        httpd_stop(_server);
+    stop();
 }
 
 /**
@@ -24,6 +25,7 @@ IotServer::~IotServer(void)
  *
  * @return ESP_OK on success, otherwise an error code
  */
+
 esp_err_t IotServer::start(void)
 {
     esp_err_t ret = ESP_OK;
@@ -35,70 +37,70 @@ esp_err_t IotServer::start(void)
         return ESP_OK;
     }
 
-//    size_t cert_len = 0;
-//    uint8_t *cert = nullptr;
-//
-//    if(_iot_storage == nullptr)
-//    {
-//        _iot_storage = new IotStorage("factory_nvs", "IotFactory");
-//    }
-//
-//    ret = _iot_storage->read("cert", reinterpret_cast<void **>(&cert), cert_len);
-//
-//    if(ret != ESP_OK)
-//    {
-//        ESP_LOGE(TAG, "%s: Failed to get cert -> %s ", __func__, esp_err_to_name(ret));
-//        return ret;
-//    }
-//
-//    ESP_LOGI(TAG, "%s: Got cert with length of -> %d is -> %s", __func__, cert_len, (char *)cert);
-//
-//    size_t pvt_key_len = 0;
-//    uint8_t *pvt_key = nullptr;
-//
-//    ret = _iot_storage->read("pvt_key", reinterpret_cast<void **>(&pvt_key), pvt_key_len);
-//
-//    if(ret != ESP_OK)
-//    {
-//        ESP_LOGE(TAG, "%s: Failed to get private key -> %s", __func__, esp_err_to_name(ret));
-//        return ret;
-//    }
-//
-//    size_t ca_cert_len = 0;
-//    uint8_t *ca_cert = nullptr;
-//
-//    ret = _iot_storage->read("ca_cert", reinterpret_cast<void **>(&ca_cert), ca_cert_len);
-//
-//    if(ret != ESP_OK)
-//    {
-//        ESP_LOGE(TAG, "%s: Failed to get private key -> %s", __func__, esp_err_to_name(ret));
-//        return ret;
-//    }
+#if CONFIG_IOT_HOVER_SERVER_HTTPS
+    auto storage = IotFactory::create_scoped<IotStorage>(IOT_NVS_FACTORY_PART_NAME,
+                                                         IOT_NVS_FACTORY_NAMESPACE);
 
-//    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
-//
-//    config.servercert = cert;
-//    config.servercert_len = cert_len;
-//    config.prvtkey_pem = pvt_key;
-//    config.prvtkey_len = pvt_key_len;
-//    config.cacert_pem = ca_cert;
-//    config.cacert_len = ca_cert_len;
-//
-//    ret = httpd_ssl_start(&_server, &config);
+    size_t cert_len = 0;
+    uint8_t *cert = nullptr;
 
+    ret = storage->read("cert", reinterpret_cast<void **>(&cert), cert_len, TYPE_STR);
+
+    if(ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "%s: Failed to get cert [reason: %s] ", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "%s: Got cert [length: %d, data: %s]", __func__, cert_len, (char *)cert);
+
+    size_t pvt_key_len = 0;
+    uint8_t *pvt_key = nullptr;
+
+    ret = storage->read("pvt_key", reinterpret_cast<void **>(&pvt_key), pvt_key_len, TYPE_STR);
+
+    if(ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "%s: Failed to get private key [reason: %s] ", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+
+    size_t ca_cert_len = 0;
+    uint8_t *ca_cert = nullptr;
+
+    ret = storage->read("ca_cert", reinterpret_cast<void **>(&ca_cert), ca_cert_len, TYPE_STR);
+
+    if(ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "%s: Failed to get private key [reason: %s]", __func__, esp_err_to_name(ret));
+        return ret;
+    }
+
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+
+    config.servercert = cert;
+    config.servercert_len = cert_len;
+    config.prvtkey_pem = pvt_key;
+    config.prvtkey_len = pvt_key_len;
+    config.cacert_pem = ca_cert;
+    config.cacert_len = ca_cert_len;
+    config.httpd.uri_match_fn = httpd_uri_match_wildcard;
+
+    ret = httpd_ssl_start(&_server, &config);
+#elif CONFIG_IOT_HOVER_SERVER_HTTP
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.task_priority = 4;
     config.stack_size = 8192;
     config.max_uri_handlers = 10;
     config.recv_wait_timeout = 10;
     config.send_wait_timeout = 10;
-
     config.uri_match_fn = httpd_uri_match_wildcard;
 
     ret = httpd_start(&_server, &config);
+#endif
 
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "%s: Failed to start http server reason -> %s", __func__, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "%s: Failed to start http server [reason: %s]", __func__, esp_err_to_name(ret));
         return ret;
     }
 
@@ -107,6 +109,15 @@ esp_err_t IotServer::start(void)
     ESP_LOGI(TAG, "%s: Component started successfully", __func__);
 
     return ret;
+}
+
+/**
+ * Stops the components.
+ */
+void IotServer::stop(void)
+{
+    if (_server != nullptr)
+        httpd_stop(_server);
 }
 
 /**
@@ -120,6 +131,8 @@ void IotServer::set_auth(std::string auth)
         _api_key = API_KEY;
     else
         _api_key = auth;
+
+    ESP_LOGI(TAG, "%s: API KEY: %s", __func__, _api_key.c_str());
 }
 
 /**
@@ -147,8 +160,8 @@ esp_err_t IotServer::register_route(const std::string path, httpd_method_t metho
     const httpd_uri_t uri_handler = {
             .uri = uri.c_str(),
             .method = method,
-            .handler = handler,
-            .user_ctx = nullptr
+            .handler = on_auth,
+            .user_ctx = (void *)handler
     };
 
     esp_err_t ret = httpd_register_uri_handler(_server, &uri_handler);
@@ -165,121 +178,132 @@ esp_err_t IotServer::register_route(const std::string path, httpd_method_t metho
 }
 
 /**
- * Checks the request header for authorization headers and a valid api-key.
+ * Checks the request header for valid authorization.
  *
  * @param[in] req A pointer to the http request object.
  * @return ESP_OK on success, ESP_FAIL request is not authorized.
  */
-esp_err_t IotServer::valid_auth(httpd_req_t *req)
+esp_err_t IotServer::on_auth(httpd_req_t *req)
 {
     ESP_LOGI(TAG, "%s: Verifying if the request is authorized", __func__);
 
-    const char *header = "X-API-KEY";
+    const char *hdr_key = "X-API-KEY";
 
     esp_err_t ret = ESP_FAIL;
 
-    size_t header_len = httpd_req_get_hdr_value_len(req, header);
+    size_t hdr_len = httpd_req_get_hdr_value_len(req, hdr_key);
 
-    if (header_len < 1) {
-        ESP_LOGE(TAG, "%s: Couldn't find the -> %s header", __func__, header);
+    if (hdr_len < 1) {
+        ESP_LOGE(TAG, "%s: Couldn't find header [name: %s ]", __func__, hdr_key);
+        httpd_resp_send_err(req,  HTTPD_401_UNAUTHORIZED, nullptr);
         return ret;
     }
 
-    header_len += 1;
+    hdr_len += 1;
 
-    ESP_LOGI(TAG, "%s: Found -> %s header", __func__, header);
+    ESP_LOGI(TAG, "%s: Found header [name: %s]", __func__, hdr_key);
 
-    char *api_key = iot_allocate_mem<char>(header_len);
+    char *api_key = iot_allocate_mem<char>(hdr_len);
 
     if (api_key == nullptr)
         return ret;
 
-    ESP_LOGI(TAG, "%s: %s Header value retrieved, verifying match", __func__, header);
+    ret = httpd_req_get_hdr_value_str(req, hdr_key, api_key, hdr_len);
+
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "%s: Couldn't GET header [name: %s ] value", __func__, hdr_key);
+        iot_free_one(api_key);
+        httpd_resp_send_err(req,  HTTPD_401_UNAUTHORIZED, nullptr);
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "%s: %s Header value retrieved, verifying match", __func__, hdr_key);
 
     ret = _api_key == api_key ? ESP_OK : ESP_FAIL;
 
-    ESP_LOGI(TAG, "%s: Request is -> %s", __func__, ret == ESP_OK ? "authorized" : "unauthorized");
+    ESP_LOGI(TAG, "%s: Request [state: %s]", __func__, ret == ESP_OK ? "authorized" : "unauthorized");
 
-    free(api_key);
+    iot_free_one(api_key);
+
+    if (ret == ESP_OK) {
+        iot_not_null(req->user_ctx);
+        auto handler = reinterpret_cast<esp_err_t (*)(httpd_req_t *)>(req->user_ctx);
+        return handler(req);
+    }
+
+    httpd_resp_send_err(req,  HTTPD_401_UNAUTHORIZED, nullptr);
 
     return ret;
 }
 
 /**
- * Sends an http success response to the request.
+ * Sends an http success response.
  *
  * @param[in] req A pointer to the http request object.
- * @param[in] dataThe The string data to include in the response body.
- * @param[in] status The HTTP status code to set in the response, Default "200" OK.
- * @param[in] len    The length of the response data.
+ * @param[in] body The response data.
+ * @param[in] status The response status. Default is 200.
+ * @param[in] message Whether the response body is just plain text and not json. Default is false
  * @return ESP_OK on success, otherwise an error code
  */
-esp_err_t IotServer::send_res(httpd_req_t *req, const char *data, size_t len, const char *status)
+esp_err_t IotServer::send_res(httpd_req_t *req, const char *data, bool message, iot_http_status_e status)
 {
-    httpd_resp_set_status(req, status);
-    httpd_resp_set_type(req, IOT_HTTPD_TYPE_JSON);
+    httpd_resp_set_status(req, std::to_string(status).c_str());
 
-    if (data != nullptr) {
-        if (len == 0) {
-            len = strlen(data);
+    bool parse_error = false;
+
+    char *buf;
+
+    cJSON *res = cJSON_CreateObject();
+
+    if (res == nullptr) {
+        parse_error = true;
+    } else {
+        if (message)
+            cJSON_AddStringToObject(res, "message", data);
+        else {
+            if (data != nullptr)
+                cJSON_AddRawToObject(res, "data", data);
         }
 
-        return httpd_resp_send(req, data, len);
+        cJSON_AddNumberToObject(res, "status", status);
+        cJSON_AddStringToObject(res, "timestamp", iot_now_str().data());
     }
 
-    return httpd_resp_send(req, nullptr, 0);
+    if (!parse_error) {
+        buf = cJSON_Print(res);
+
+        if (buf == nullptr)
+            parse_error = true;
+    }
+
+    esp_err_t ret;
+
+    size_t len =  data == nullptr ? 0 : HTTPD_RESP_USE_STRLEN;
+
+    if (parse_error) {
+        httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+        ret = httpd_resp_send(req,  data, len);
+    } else {
+        httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+
+        ret = httpd_resp_send(req, buf, len);
+
+        iot_free(buf);
+        cJSON_Delete(res);
+    }
+
+    return ret;
 }
 
 /**
- * Sends an http success response to the request.
+ * Gets the request body.
  *
  * @param[in] req A pointer to the http request object.
- * @param[in] res The response data.
- * @return ESP_OK on success, otherwise an error code
- */
-esp_err_t IotServer::send_res(httpd_req_t *req, iot_response_t res)
-{
-    httpd_resp_set_status(req, res.status);
-
-    switch (res.type) {
-        case IOT_RESPONSE_TYPE_JSON:
-            httpd_resp_set_type(req, IOT_HTTPD_TYPE_JSON);
-            break;
-        case IOT_RESPONSE_TYPE_DEFAULT:
-            httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
-            break;
-        case IOT_RESPONSE_TYPE_PROTO:
-            httpd_resp_set_type(req, IOT_HTTPD_TYPE_PROTO);
-            break;
-    }
-
-    if (res.data != nullptr) {
-        size_t len = res.len;
-
-        if (len == 0)
-            len = strlen(res.data);
-
-        esp_err_t ret = httpd_resp_send(req, res.data, len);
-
-        if (res.free_data) {
-            free(res.data);
-        }
-
-        return ret;
-    }
-
-    return httpd_resp_send(req, nullptr, 0);
-}
-
-/**
- * Gets an http request and reads its payload data.
- *
- * @param[in] req A pointer to the http request object.
- * @param[out] buf A pointer to the buffer where the payload data will be stored.
+ * @param[out] buf A pointer to the buffer to store the request body.
  * @param[in] buf_len The length of the buffer.
- * @return ESP_OK on success, otherwise an error code
+ * @return ESP_OK on success, otherwise an error code.
  */
-esp_err_t IotServer::get_payload(httpd_req_t *req, char *buf, size_t buf_len)
+esp_err_t IotServer::get_body(httpd_req_t *req, char *buf, size_t buf_len)
 {
     ESP_LOGI(TAG, "%s: Reading payload", __func__);
 
@@ -290,7 +314,7 @@ esp_err_t IotServer::get_payload(httpd_req_t *req, char *buf, size_t buf_len)
         return ESP_FAIL;
     }
 
-//    buf[buf_len] = '\0';
+    buf[buf_len] = '\0';
 
     ESP_LOGI(TAG, "%s: Successfully read [payload: %s]", __func__, buf);
 
@@ -301,60 +325,47 @@ esp_err_t IotServer::get_payload(httpd_req_t *req, char *buf, size_t buf_len)
  * Sends an error response.
  *
  * @param[in] req A pointer to the http request object.
- * @param[in] res The error response data.
- * @return ESP_OK.
+ * @param[in] message The error message.
+ * @param[in] status The error status. Default is 500
+ * @return ESP_FAIL.
  */
-esp_err_t IotServer::send_err(httpd_req_t *req, iot_error_response_t res)
+esp_err_t IotServer::send_err(httpd_req_t *req, const char *message, iot_http_status_e status)
 {
-    char *buf = nullptr;
-    size_t len = HTTPD_RESP_USE_STRLEN;
+    bool parse_error = false;
 
-    if (res.type == IOT_RESPONSE_TYPE_PROTO) {
-        IotResponse response = IOT_RESPONSE__INIT;
+    char *buf;
 
-        if (res.error == HTTPD_400_BAD_REQUEST)
-            response.status = IOT_RESPONSE_STATUS__REJECTED;
+    cJSON *res = cJSON_CreateObject();
 
-        if (res.error == HTTPD_500_INTERNAL_SERVER_ERROR)
-            response.status = IOT_RESPONSE_STATUS__FAILED;
+    if (res == nullptr) {
+        parse_error = true;
+    } else {
+        cJSON_AddStringToObject(res, "problem", message);
+        cJSON_AddNumberToObject(res, "status", status);
+        cJSON_AddStringToObject(res, "timestamp", iot_now_str().data());
+    }
+    
+    if (!parse_error) {
+        buf = cJSON_Print(res);
 
-        if (res.message != nullptr)
-            response.message = res.message;
-
-        len = iot_response__get_packed_size(&response);
-
-        buf = iot_allocate_mem<char>(len);
-
-        if (buf != nullptr)
-            iot_response__pack(&response, reinterpret_cast<uint8_t *>(buf));
-        else
-            res.type = IOT_RESPONSE_TYPE_DEFAULT; // Send text
+        if (buf == nullptr)
+            parse_error = true;
     }
 
-    if (res.type == IOT_RESPONSE_TYPE_DEFAULT) {
-        httpd_resp_send_err(req, res.error, res.message);
-        return ESP_OK;
+    if (parse_error) {
+        httpd_resp_set_type(req, HTTPD_TYPE_TEXT);
+        httpd_resp_send_err(req,  HTTPD_500_INTERNAL_SERVER_ERROR, message);
+    } else {
+        httpd_resp_set_type(req, HTTPD_TYPE_JSON);
+        httpd_resp_set_status(req, std::to_string(status).c_str());
+
+        httpd_resp_send(req, buf, HTTPD_RESP_USE_STRLEN);
+
+        cJSON_free(buf);
+        cJSON_Delete(res);
     }
 
-    if (res.type == IOT_RESPONSE_TYPE_PROTO)
-        httpd_resp_set_type(req, IOT_HTTPD_TYPE_PROTO);
-
-    if (res.type == IOT_RESPONSE_TYPE_JSON)
-        httpd_resp_set_type(req, IOT_HTTPD_TYPE_PROTO);
-
-    send_res(req, buf, len, http_err_status(res.error).c_str());
-
-    if (res.free_msg) {
-        if (res.type == IOT_RESPONSE_TYPE_JSON)
-            free(res.message);
-        else {
-            if (buf != nullptr)
-                free(buf);
-        }
-
-    }
-
-    return ESP_OK;
+    return ESP_FAIL;
 }
 
 /**
@@ -406,42 +417,4 @@ std::string IotServer::get_path_param(httpd_req_t *req, std::string path)
     ESP_LOGW(TAG, "%s: Path param not found for the [path: %s]", __func__, path.c_str());
 
     return "";
-}
-
-
-/**
- * Gets the http status of the error code.
- *
- * @param error The code to get the status for.
- * @return std::string The error status.
- */
-std::string IotServer::http_err_status(httpd_err_code_t error)
-{
-    switch (error) {
-        case HTTPD_501_METHOD_NOT_IMPLEMENTED:
-            return "501 Method Not Implemented";
-        case HTTPD_505_VERSION_NOT_SUPPORTED:
-            return "505 Version Not Supported";
-        case HTTPD_400_BAD_REQUEST:
-            return "400 Bad Request";
-        case HTTPD_401_UNAUTHORIZED:
-            return "401 Unauthorized";
-        case HTTPD_403_FORBIDDEN:
-            return "403 Forbidden";
-        case HTTPD_404_NOT_FOUND:
-            return "404 Not Found";
-        case HTTPD_405_METHOD_NOT_ALLOWED:
-            return "405 Method Not Allowed";
-        case HTTPD_408_REQ_TIMEOUT:
-            return "408 Request Timeout";
-        case HTTPD_414_URI_TOO_LONG:
-            return "414 URI Too Long";
-        case HTTPD_411_LENGTH_REQUIRED:
-            return "411 Length Required";
-        case HTTPD_431_REQ_HDR_FIELDS_TOO_LARGE:
-            return "431 Request Header Fields Too Large";
-        case HTTPD_500_INTERNAL_SERVER_ERROR:
-        default:
-            return "500 Internal Server Error";
-    }
 }
