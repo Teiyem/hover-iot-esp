@@ -13,7 +13,6 @@
 #include "lwip/apps/netbiosns.h"
 #include "iot_component.h"
 #include "iot_defs.h"
-#include "iot_event_dispatcher.h"
 
 /**
  * A class for handling network related tasks.
