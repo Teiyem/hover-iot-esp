@@ -4,9 +4,9 @@ Hover Esp is built using the ESP-IDF framework for ESP32 devices that is designe
 [![CI Build Hover Esp](https://github.com/Teiyem/hover-iot-esp/actions/workflows/hover-iot-esp-ci.yml/badge.svg)](https://github.com/Teiyem/hover-iot-esp/actions/workflows/hover-iot-esp-ci.yml)
 
 ## Features
-* Http/s server. ⚠️
+* Http/s server.
 * Wi-Fi Provisioning.
-* Over-the-air updates. ⚠️
+* Over-the-air updates.
 * Mqtt ⚠️
 * Encryption.
 
