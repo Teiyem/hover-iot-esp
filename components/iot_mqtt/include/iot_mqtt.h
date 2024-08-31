@@ -28,7 +28,6 @@ private:
     std::mutex _cb_mutex;                                                       /**< Mutex for protecting access to the event callbacks map. */
     std::unordered_map<std::string, iot_mqtt_subscribe_cb_t> _subscriptions{};  /**< The map of mqtt subscribers. */
 
-    static std::function<void(iot_app_message_e)> _evt_cb;
     static void on_event(void *args, esp_event_base_t base, int32_t id, void *data);
     void on_data(esp_mqtt_event_handle_t evt);
 };

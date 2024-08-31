@@ -29,13 +29,12 @@ public:
     esp_err_t send_res(httpd_req_t *req, const char *body, bool message = false, iot_http_status_e status = IOT_HTTP_STATUS_200_OK);
     esp_err_t get_body(httpd_req_t *req, char *buf, size_t buf_len);
     esp_err_t get_query_value(const char *query, const char *key, char **value);
-    esp_err_t send_err(httpd_req_t *req, const char *error, iot_http_status_e status = IOT_HTTP_STATUS_500_INT_SERVER_ERROR);
+    esp_err_t send_err(httpd_req_t *req, const char *error = IOT_HTTP_DEFAULT_ERR_MSG, iot_http_status_e status = IOT_HTTP_STATUS_500_INT_SERVER_ERROR);
     std::string get_path_param(httpd_req_t *p_req, std::string path);
 
 private:
     static constexpr const char *TAG = "IotServer";                                      /**< A constant used to identify the source of the log message of this class. */
     static constexpr const char *API_KEY = "aesY}zeN]v4DOp@o2)-";                        /**< A temporary api key*/
-    static constexpr const char *DEFAULT_ERR_MSG = "The request could not be processed"; /**< The default error message.*/
     static constexpr const char *BASE_SERVER_PATH = "/api/v1/device/";                   /**< The base url path for the server. */
     const uint8_t MAX_QUERY_VALUE_SIZE = 51;                                             /**< The max query length size.*/
     static std::string _api_key;

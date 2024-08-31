@@ -48,9 +48,8 @@ bool iot_valid_str(const char *str);
 template <typename T>
 void iot_not_null(T *value)
 {
-    if (value == nullptr){
-        esp_system_abort("Value is null");
-    }
+    if (value == nullptr)
+        esp_system_abort("Value is null" );
 }
 
 /**

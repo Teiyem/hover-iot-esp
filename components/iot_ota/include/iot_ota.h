@@ -2,7 +2,6 @@
 
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
-#include "esp_http_client.h"
 #include "iot_common.h"
 #include "iot_server.h"
 #include "iot_factory.h"
@@ -29,4 +28,5 @@ private:
     static esp_err_t start(void);
     static esp_err_t write(char *buf, size_t buf_size, size_t *remaining);
     static esp_err_t end(void);
+    static esp_err_t validate(char *body);
 };

@@ -325,7 +325,7 @@ esp_err_t IotServer::get_body(httpd_req_t *req, char *buf, size_t buf_len)
  * Sends an error response.
  *
  * @param[in] req A pointer to the http request object.
- * @param[in] message The error message.
+ * @param[in] message The error message. Default is DEFAULT_ERR_MSG define.
  * @param[in] status The error status. Default is 500
  * @return ESP_FAIL.
  */

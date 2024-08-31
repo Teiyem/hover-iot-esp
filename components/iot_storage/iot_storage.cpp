@@ -33,8 +33,9 @@ IotStorage::IotStorage(const char *partition, const char *name_space)
         return;
     }
 
-    if (CONFIG_IOT_HOVER_ENV_DEV)
-        print_stats(partition, name_space);
+#ifdef CONFIG_IOT_HOVER_ENV_DEV
+    print_stats(partition, name_space);
+#endif
 }
 
 /**
@@ -111,6 +112,11 @@ esp_err_t IotStorage::read(const char *key, void **buf, size_t &len, iot_nvs_val
 {
     if (failed_to_open)
         return ESP_ERR_INVALID_STATE;
+
+    if (!iot_valid_str(key)) {
+        ESP_LOGE(TAG, "%s: The provided nvs key is invalid", __func__);
+        return ESP_ERR_INVALID_ARG;
+    }
 
     esp_err_t ret = ESP_OK;
 

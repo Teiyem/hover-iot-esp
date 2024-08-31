@@ -26,7 +26,7 @@ public:
     }
 
     /**
-     * Creates and returns a singleton instance of a default-constructible component of type T.
+     * Creates and returns a singleton instance of a parameterized component of type T.
      *
      * @tparam T The type of the component to create.
      * @tparam Args The types of the arguments to pass to the constructor of T.

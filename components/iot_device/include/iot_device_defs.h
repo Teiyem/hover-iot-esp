@@ -214,12 +214,12 @@ iot_val_t iot_val_int(uint32_t num);
 iot_val_t iot_val_bool(bool boolean);
 iot_val_t iot_val_str(char * str);
 
-iot_attribute_t iot_attribute_create(std::string name, iot_val_t value, bool is_primary = false);
-iot_device_info_t *iot_device_create(std::string name, iot_device_type_t type);
+iot_attribute_t iot_attribute_create(const char *name, iot_val_t value, bool is_primary = false);
+iot_device_info_t *iot_device_create(const char *name, iot_device_type_t type);
 iot_attribute_req_data_t iot_attribute_create_ctl_data(iot_val_t value);
 
-esp_err_t iot_attribute_add_param(iot_attribute_t *attribute, std::string key, iot_val_t value);
-esp_err_t iot_device_add_service(iot_device_info_t *device, std::string name, bool enabled, bool core_service);
+esp_err_t iot_attribute_add_param(iot_attribute_t *attribute,const char *key, iot_val_t value);
+esp_err_t iot_device_add_service(iot_device_info_t *device, const char *name, bool enabled, bool core_service);
 esp_err_t iot_device_add_attribute(iot_device_info_t *device, iot_attribute_t attribute);
 
 iot_attribute_req_data_t iot_attribute_create_read_req_data(std::string name);

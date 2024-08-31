@@ -57,7 +57,7 @@ iot_val_t iot_val_str(char *str)
  * @return iot_device_info_t A pointer to the created device.
  * @note free the memory once done.
  */
-iot_device_info_t *iot_device_create(std::string name, iot_device_type_t type)
+iot_device_info_t *iot_device_create(const char *name, iot_device_type_t type)
 {
     iot_device_info_t *info = iot_allocate_mem<iot_device_info_t>((sizeof(iot_device_info_t)));
 
@@ -78,7 +78,7 @@ iot_device_info_t *iot_device_create(std::string name, iot_device_type_t type)
  * @param[in] is_primary Whether the attribute is a primary one.
  * @return iot_attribute_t The created attribute.
  */
-iot_attribute_t iot_attribute_create(std::string name, iot_val_t value, bool is_primary)
+iot_attribute_t iot_attribute_create(const char *name, iot_val_t value, bool is_primary)
 {
     return  {.name = name, .is_primary = is_primary, .value = value, .params = {}};
 }
@@ -91,18 +91,18 @@ iot_attribute_t iot_attribute_create(std::string name, iot_val_t value, bool is_
  * @param[in] value The parameter's value.
  * @returns ESP_OK on success, otherwise ESP_ERR_INVALID_ARG for duplicate values.
  */
-esp_err_t iot_attribute_add_param(iot_attribute_t *attribute, std::string key, iot_val_t value)
+esp_err_t iot_attribute_add_param(iot_attribute_t *attribute, const char *key, iot_val_t value)
 {
     for (const auto& param : attribute->params) {
         if (param.key == key) {
-            ESP_LOGE(TAG, "%s: Param with key -> %s has already added.", __func__ ,key.c_str());
+            ESP_LOGE(TAG, "%s: Param with key -> %s has already added.", __func__ ,key);
             return ESP_ERR_INVALID_ARG;
         }
     }
 
     attribute->params.push_back(iot_param_t(key, value));
 
-    ESP_LOGD(TAG, "%s: Added parameter with name ->  %s to the device",  __func__,  key.c_str());
+    ESP_LOGD(TAG, "%s: Added parameter with name ->  %s to the device",  __func__,  key);
 
     return ESP_OK;
 }
@@ -116,11 +116,11 @@ esp_err_t iot_attribute_add_param(iot_attribute_t *attribute, std::string key, i
  * @param[in] core_service Whether the service is a core services.
  * @returns ESP_OK on success, otherwise ESP_ERR_INVALID_ARG for duplicate values.
  */
-esp_err_t iot_device_add_service(iot_device_info_t *device, std::string name, bool enabled, bool core_service)
+esp_err_t iot_device_add_service(iot_device_info_t *device, const char *name, bool enabled, bool core_service)
 {
     for (const auto& service : device->services) {
         if (service.name == name) {
-            ESP_LOGE(TAG, "%s: Service with name -> %s has already added.", __func__ ,name.c_str());
+            ESP_LOGE(TAG, "%s: Service with name -> %s has already added.", __func__ ,name);
             return ESP_ERR_INVALID_ARG;
         }
     }
@@ -129,7 +129,7 @@ esp_err_t iot_device_add_service(iot_device_info_t *device, std::string name, bo
 
     device->services.push_back(service);
 
-    ESP_LOGD(TAG, "%s: Added service with name ->  %s to the device",  __func__, name.c_str());
+    ESP_LOGD(TAG, "%s: Added service with name ->  %s to the device",  __func__, name);
 
     return ESP_OK;
 }
@@ -180,33 +180,33 @@ iot_attribute_req_data_t iot_attribute_create_read_req_data(std::string name)
  */
  esp_err_t iot_val_add_to_json(cJSON *json, iot_val_t val)
 {
-    std::string value;
+    const char *value_key = "value";
     std::string type;
 
     switch (val.type)
     {
         case IOT_VAL_TYPE_BOOLEAN:
-            value = std::to_string(val.b).c_str();
+            cJSON_AddBoolToObject(json, value_key, val.b);
             type = IOT_VAL_TYPE_BOOLEAN_STR;
             ESP_LOGD(TAG, "%s: Added bool [value: %d] to json object",  __func__,  val.b);
             break;
         case IOT_VAL_TYPE_INTEGER:
-            value = std::to_string( val.i).c_str();
+            cJSON_AddNumberToObject(json, value_key, val.i);
             type = IOT_VAL_TYPE_INTEGER_STR;
             ESP_LOGD(TAG, "%s: Added int [value: %lu] to json object",  __func__,  val.i);
             break;
         case IOT_VAL_TYPE_FLOAT:
-            value = std::to_string(val.f).c_str();
+            cJSON_AddNumberToObject(json, value_key, val.f);
             type = IOT_VAL_TYPE_FLOAT_STR;
             ESP_LOGD(TAG, "%s: Added float [value: %f] to json object",  __func__,  val.f);
             break;
         case IOT_VAL_TYPE_LONG:
-            value = std::to_string(val.l).c_str();
+            cJSON_AddNumberToObject(json, value_key, val.l);
             type = IOT_VAL_TYPE_LONG_STR;
             ESP_LOGD(TAG, "%s: Added long [value: %llu] to json object",  __func__,  val.l);
             break;
         case IOT_VAL_TYPE_STRING:
-            value = val.s;
+            cJSON_AddStringToObject(json, value_key, val.s);
             type = IOT_VAL_TYPE_STRING_STR;
             ESP_LOGD(TAG, "%s: Added bool [value: %s] to json object",  __func__,  val.s);
             break;
@@ -215,7 +215,6 @@ iot_attribute_req_data_t iot_attribute_create_read_req_data(std::string name)
             return ESP_ERR_INVALID_ARG;
     }
 
-    cJSON_AddStringToObject(json, "value", value.c_str());
     cJSON_AddStringToObject(json, "type", type.c_str());
 
     return ESP_OK;

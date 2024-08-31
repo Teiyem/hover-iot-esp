@@ -1,5 +1,6 @@
 #include <cJSON.h>
 #include <sys/param.h>
+#include <esp_app_format.h>
 #include "iot_ota.h"
 
 /** The handle for the OTA update. */
@@ -42,6 +43,7 @@ esp_err_t IotOta::init(esp_app_desc_t *app_desc)
         if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
             ESP_LOGI(TAG, "%s: Marking update as success", __func__);
                 esp_ota_mark_app_valid_cancel_rollback();
+                  // TODO: Possible check to verify if everything is in order perhaps ?
 //                esp_ota_mark_app_invalid_rollback_and_reboot();
         }
     }
@@ -73,22 +75,28 @@ esp_err_t IotOta::init(esp_app_desc_t *app_desc)
 esp_err_t IotOta::on_update(httpd_req_t *req)
 {
     char buf[IOT_OTA_MAX_BUFFER_SIZE];
-    int recv;
+    int received;
     bool body_start = false;
-    size_t rem = req->content_len;
+    size_t remaining  = req->content_len;
     esp_err_t ret = ESP_FAIL;
-    _ota_state = IOT_OTA_STATE_FAILED;
     int read = 0;
 
-    do {
-        recv = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf)));
+    auto unlock = []() {
+        esp_event_post(IOT_EVENT, IOT_APP_UNLOCK_TASK_EVENT, nullptr, 0, portMAX_DELAY);
+    };
 
-        if (recv < 0) {
-            if (recv == HTTPD_SOCK_ERR_TIMEOUT) {
+    do {
+        received = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf)));
+
+        if (received < 0) {
+            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
                 ESP_LOGI(TAG, "%s: Socket Timed out, retrying to receive content....", __func__);
                 continue;
             }
-            ESP_LOGI(TAG, "%s: Failed to receive content [reason: %d]", __func__, recv);
+            ESP_LOGI(TAG, "%s: Failed to receive content [reason: %d]", __func__, received);
+
+            if (_ota_state == IOT_OTA_STATE_STARTED)
+                unlock();
 
             return _iot_server->send_err(req, "Failed to receive content");
         }
@@ -96,50 +104,59 @@ esp_err_t IotOta::on_update(httpd_req_t *req)
         if (!body_start) {
             body_start = true;
 
-            char *temp = strstr(buf, "\r\n\r\n");
+            char *body = strstr(buf, "\r\n\r\n");
 
-            if (temp == nullptr) {
+            if (body == nullptr) {
                 ESP_LOGE(TAG, "%s: Malformed request, no header-body separator found", __func__);
                 return _iot_server->send_err(req, "Malformed request");
             }
 
-            temp += 4;
+            body += 4;
 
-            int len = recv - (temp - buf);
+            int header_len = received - (body - buf);
 
-            ESP_LOGI(TAG, "%s: OTA file [size: %d\r\n", __func__, rem);
+            ESP_LOGI(TAG, "%s: OTA file [size: %d]", __func__, remaining);
 
+            ret = validate(body);
+
+#if CONFIG_IOT_HOVER_ENV_PROD
+            if (ret != ESP_OK)
+                return _iot_server->send_err(req, "Update not valid");
+#endif
             ret = start();
 
             if (ret != ESP_OK)
                 return _iot_server->send_err(req, "Failed to start update");
 
-            ret = write(temp, len, &rem);
+            ret = write(body, header_len, &remaining );
 
-            if (ret != ESP_OK)
+            if (ret != ESP_OK) {
+                unlock();
                 return _iot_server->send_err(req, "Failed to write update");
-
-            read += len;
+            }
+            read += header_len;
         } else {
-            ret = write(buf, recv, &rem);
-            if (ret != ESP_OK)
+            ret = write(buf, received, &remaining );
+            if (ret != ESP_OK) {
+                unlock();
                 return _iot_server->send_err(req, "Failed to write update");
+            }
 
-            read += recv;
+            read += received;
         }
 
 
-    } while (recv > 0 && read < req->content_len);
+    } while (received > 0 && read < req->content_len);
 
     ret = end();
+
+    unlock();
 
     if (ret != ESP_OK)
         return _iot_server->send_err(req, "Failed to end update");
 
-    if (_ota_state == IOT_OTA_STATE_SUCCESS) {
-        iot_event_request_reboot_t reboot = {};
-        esp_event_post(IOT_EVENT, IOT_APP_MSG_OTA_UPDATE_OK, &reboot, sizeof(iot_event_request_reboot_t), portMAX_DELAY);
-    }
+    iot_should_reboot_event_t reboot = {};
+    esp_event_post(IOT_EVENT, IOT_APP_SHOULD_REBOOT_EVENT, &reboot, sizeof(iot_should_reboot_event_t), portMAX_DELAY);
 
     ret = _iot_server->send_res(req, "Update completed", true);
 
@@ -203,6 +220,7 @@ esp_err_t IotOta::start(void)
     esp_err_t ret = esp_ota_begin(_update_partition, OTA_SIZE_UNKNOWN, &_update_handle);
 
     if (ret != ESP_OK) {
+        _ota_state = IOT_OTA_STATE_FAILED;
         ESP_LOGE(TAG, "%s-> Failed to begin ota [reason: %s]", __func__, esp_err_to_name(ret));
         esp_ota_abort(_update_handle);
         return ESP_FAIL;
@@ -211,7 +229,64 @@ esp_err_t IotOta::start(void)
     ESP_LOGI(TAG, "%s-> Writing to ota partition [subtype: %d, offset: 0x%lx]", __func__, _update_partition->subtype,
              _update_partition->address);
 
+    _ota_state = IOT_OTA_STATE_STARTED;
+
+    esp_event_post(IOT_EVENT, IOT_APP_LOCK_TASK_EVENT, nullptr, 0, portMAX_DELAY);
+
     return ESP_OK;
+}
+
+/**
+ * Validates the firmware version.
+ *
+ * @param[in] body A pointer to the ota data.
+ * @return ESP_OK on success, otherwise an error code.
+ */
+esp_err_t IotOta::validate(char *body)
+{
+    ESP_LOGI(TAG, "%s: Validating update [time: %s]", __func__, iot_now_str().c_str());
+
+    size_t len = strlen(body);
+    size_t req = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t);
+
+    if (len < req) {
+        ESP_LOGE(TAG, "%s: Body [size: %d] is less then required [size: %d]", __func__, len, req);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_app_desc_t app_desc;
+
+    memcpy(&app_desc, &body[sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t)], sizeof(esp_app_desc_t));
+
+    ESP_LOGI(TAG, "%s: New firmware [version: %s]", __func__, app_desc.version);
+
+    const esp_partition_t *invalid_app = esp_ota_get_last_invalid_partition();
+    esp_app_desc_t invalid_app_desc;
+
+    if (esp_ota_get_partition_description(invalid_app, &invalid_app_desc) == ESP_OK) {
+        ESP_LOGI(TAG, "%s: Last invalid firmware [version: %s]", __func__, invalid_app_desc.version);
+    }
+
+    esp_err_t ret = ESP_FAIL;
+
+    if (invalid_app != nullptr) {
+        ret = memcmp(invalid_app_desc.version, app_desc.version, sizeof(app_desc.version)) == 0 ? ESP_FAIL : ESP_OK;
+
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "%s: The new version is the same as the invalid version.", __func__);
+            ESP_LOGW(TAG, "%s: There was an attempt to launch the firmware with the [version: %s], but it failed.", __func__,
+                     invalid_app_desc.version);
+            ESP_LOGW(TAG, "%s: The firmware has been rolled back to the previous version.", __func__);
+        }
+    }
+
+    ret = memcmp(app_desc.version, _app_info->version, sizeof(app_desc.version)) == 0 ? ESP_FAIL : ESP_OK;
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "%s: The current running version is the same as a new. Update aborted.", __func__);
+    }
+
+    return ret;
 }
 
 /**
@@ -229,6 +304,7 @@ esp_err_t IotOta::write(char *buf, size_t size, size_t *remaining)
     esp_err_t ret = esp_ota_write(_update_handle, buf, size);
 
     if (ret != ESP_OK) {
+        _ota_state = IOT_OTA_STATE_FAILED;
         ESP_LOGE(TAG, "%s: Failed to write to ota partition [reason: %s], aborting update", __func__, esp_err_to_name(ret));
         esp_ota_abort(_update_handle);
         return ret;
