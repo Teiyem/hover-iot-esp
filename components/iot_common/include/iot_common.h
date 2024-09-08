@@ -1,5 +1,9 @@
 #pragma once
 
+#define LOG_LOCAL_LEVEL ESP_LOG_VERBOSE
+
+#define NAMEOF(name) #name
+
 #include <stdlib.h>
 #include <string>
 #include <string.h>
@@ -83,7 +87,7 @@ void iot_delete_task_queue(TaskHandle_t &task_handle, QueueHandle_t &queue_handl
 
 const time_t *iot_now(void);
 std::string iot_now_str(void);
-uint64_t iot_convert_time_to_ms(const char *time);
+uint64_t iot_time_str_to_ms(const char *time);
 unsigned long IRAM_ATTR iot_millis();
 void iot_hex_to_bytes(const char* hex_str, char* byte_array, size_t byte_array_size);
 char *iot_char_s(const char *literal);

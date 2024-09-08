@@ -159,7 +159,7 @@ std::string iot_now_str(void)
  * @note Only hours, minutes, and seconds can be specified.
  * @return The time in milliseconds, or 0 if the input is invalid.
  */
-uint64_t iot_convert_time_to_ms(const char *time)
+uint64_t iot_time_str_to_ms(const char *time)
 {
     uint64_t result = 0;
     std::stringstream ss(time);

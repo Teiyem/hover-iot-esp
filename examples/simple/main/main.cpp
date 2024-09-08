@@ -100,13 +100,13 @@ void test_encrypt_decrypt(void)
         .len = strlen(plaintext)
     };
 
-    uint64_t encrypt_start = esp_timer_get_time();
+    uint64_t encrypt_start = iot_millis();
 
     char *encrypted = _iot_security->encrypt(&encrypt_params);
 
-    uint64_t encrypt_end = esp_timer_get_time();
+    uint64_t encrypt_end = iot_millis();
 
-    ESP_LOGI(MAIN_TAG, "%s: Encryption took [microseconds: %llu ]", __func__, encrypt_start - encrypt_end);
+    ESP_LOGI(MAIN_TAG, "%s: Encryption took [milliseconds: %llu ]", __func__, encrypt_start - encrypt_end);
 
     if (encrypted != nullptr)
     {
@@ -118,13 +118,13 @@ void test_encrypt_decrypt(void)
             .len = strlen(encrypted)
         };
 
-        uint64_t decrypt_start = esp_timer_get_time();
+        uint64_t decrypt_start = iot_millis();
 
         char *decrypted = _iot_security->decrypt(&decrypt_params);
 
-        uint64_t decrypt_end = esp_timer_get_time();
+        uint64_t decrypt_end = iot_millis();
 
-        ESP_LOGI(MAIN_TAG, "%s: Decryption took [microseconds: %llu ]", __func__, decrypt_start - decrypt_end);
+        ESP_LOGI(MAIN_TAG, "%s: Decryption took [milliseconds: %llu ]", __func__, decrypt_start - decrypt_end);
 
         free(encrypted);
 
@@ -142,10 +142,10 @@ void test_encrypt_decrypt(void)
  */
 void test_time_conversion()
 {
-    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1s", iot_convert_time_to_ms("1s"));
-    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1m", iot_convert_time_to_ms("1m"));
-    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1h", iot_convert_time_to_ms("1h"));
-    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1m 30s", iot_convert_time_to_ms("1m 30s"));
+    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1s", iot_time_str_to_ms("1s"));
+    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1m", iot_time_str_to_ms("1m"));
+    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1h", iot_time_str_to_ms("1h"));
+    ESP_LOGI(MAIN_TAG, "%s: [in:%s, out: %llu ms]", __func__ , "1m 30s", iot_time_str_to_ms("1m 30s"));
 }
 
 /**
@@ -166,7 +166,7 @@ extern "C" void app_main(void)
     iot_device_add_attribute(device, pwr);
     iot_device_add_attribute(device, bri);
 
-    iot_device_add_service(device, IOT_DEVICE_OTA_SERVICE, true, true);
+    iot_device_add_service(device, IOT_OTA_SERVICE, true, true);
 
     iot_device_cfg_t cfg = {.device_info = device, .req_mode = IOT_ATTRIBUTE_CB_RW, .read_cb = &iot_attribute_read_cb,
                             .write_cb = &iot_attribute_write_cb,.notify_cfg = nullptr};
