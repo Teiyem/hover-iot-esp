@@ -1,5 +1,3 @@
-#include <iot_logger.h>
-#include "iot_executor.h"
 #include "iot_application.h"
 
 /** The first connection flag. */
