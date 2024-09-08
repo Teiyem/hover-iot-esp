@@ -48,7 +48,7 @@ private:
     static TimerHandle_t _lock_timeout;
     static std::mutex _reboot_mutex;
     static uint64_t _restart_delay;
-    static bool _first_connection;
+    static std::once_flag _first_con_flag;
     static char *_timezone;
 
     IotWifi *_iot_wifi;
@@ -76,7 +76,6 @@ private:
     static void on_sntp_update(timeval *tv);
     [[noreturn]] static void task(void *param);
     static void lock_timeout([[maybe_unused]] TimerHandle_t xTimer);
-
 
     std::vector<IotComponent *> _components{};
 };

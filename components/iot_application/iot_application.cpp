@@ -1,7 +1,9 @@
+#include <iot_logger.h>
+#include "iot_executor.h"
 #include "iot_application.h"
 
-/** Whether this is the first network connection. */
-bool IotApplication::_first_connection{true};
+/** The first connection flag. */
+std::once_flag IotApplication::_first_con_flag{};
 
 /** The current application state. */
 IotAppState IotApplication::_app_state{IotAppState::INITIAL};
@@ -25,7 +27,7 @@ TimerHandle_t IotApplication::_lock_timeout{nullptr};
 std::mutex IotApplication::_reboot_mutex{};
 
 /** The milliseconds used to delay the restart of the device. */
-uint64_t IotApplication::_restart_delay{iot_convert_time_to_ms("2s")};
+uint64_t IotApplication::_restart_delay{iot_time_str_to_ms("2s")};
 
 /** The application timezone .*/
 char *IotApplication::_timezone{iot_char_s("GMT-2")};
@@ -85,7 +87,7 @@ void IotApplication::start(iot_app_cfg_t config)
     _task_lock = xSemaphoreCreateBinary();
     iot_not_null(_task_lock);
 
-    _lock_timeout = xTimerCreate("lock_timeout_timer", pdMS_TO_TICKS(iot_convert_time_to_ms("1m 30s")),
+    _lock_timeout = xTimerCreate("lock_timeout_timer", pdMS_TO_TICKS(iot_time_str_to_ms("1m 30s")),
                                  pdFALSE, (void *)0, lock_timeout);
 
     iot_not_null(_lock_timeout);
@@ -95,6 +97,12 @@ void IotApplication::start(iot_app_cfg_t config)
         set_restart(0);
         return;
     }
+
+    IotExecutor *executor  = &IotFactory::create_component<IotExecutor>();
+
+    ESP_ERROR_CHECK(executor->start());
+
+    _components.push_back(executor);
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IOT_EVENT, ESP_EVENT_ANY_ID, &on_event,
                                                         this, nullptr));
@@ -125,7 +133,7 @@ void IotApplication::start(iot_app_cfg_t config)
         init(config);
     }
 
-    xTaskCreatePinnedToCore(&task, "iot_app_task", 6096, this, 4, nullptr, 1);
+    xTaskCreatePinnedToCore(&task, "iot_app", 6096, this, 6, nullptr, 1);
 
     ESP_LOGI(TAG, "%s: Component started successfully", __func__);
 }
@@ -249,16 +257,14 @@ void IotApplication::on_connected()
 {
     _iot_status->set_mode(IotLedMode::IOT_LED_STATIC);
 
-    if (_first_connection) {
+    std::call_once(_first_con_flag, [this]() {
         init_sntp(_timezone);
 
 #ifdef CONFIG_IOT_HOVER_MQTT_ENABLED
         _iot_mqtt = &IotFactory::create_component<IotMqtt>();
-
         _iot_mqtt->start(std::string(_device_data.name) + "_" + std::string(_iot_wifi->get_mac()));
 #endif
-        _first_connection = false;
-    }
+    });
 
     if (_app_state != IotAppState::RESTARTING) {
         _app_state = IotAppState::CONNECTED;
@@ -374,7 +380,7 @@ void IotApplication::process_event(iot_event_queue_t event)
         case IOT_APP_PROV_SUCCESS_EVENT:
             _app_state = IotAppState::CONFIGURED;
             _iot_status->set_mode(IotLedMode::IOT_LED_STATIC);
-            set_restart(iot_convert_time_to_ms(IOT_REBOOT_SAFE_TIME));
+            set_restart(iot_time_str_to_ms(IOT_REBOOT_SAFE_TIME));
             break;
         case IOT_APP_PROV_FAIL_EVENT:
             set_restart(0);
@@ -391,7 +397,8 @@ void IotApplication::process_event(iot_event_queue_t event)
             }
             break;
         case IOT_APP_WIFI_RECONNECTING_EVENT:
-            _app_state = IotAppState::CONNECTING;
+            if (_app_state != IotAppState::CONNECTING)
+                _app_state = IotAppState::CONNECTING;
             break;
         case IOT_APP_WIFI_RECONNECTION_FAIL_EVENT:
             set_restart(0);
@@ -403,7 +410,7 @@ void IotApplication::process_event(iot_event_queue_t event)
         case IOT_APP_SHOULD_REBOOT_EVENT: {
             iot_should_reboot_event_t *req = static_cast<iot_should_reboot_event_t *>(event.data);
 
-            uint64_t delay = req != nullptr ? req->delay : iot_convert_time_to_ms(IOT_REBOOT_SAFE_TIME);
+            uint64_t delay = req != nullptr ? req->delay : iot_time_str_to_ms(IOT_REBOOT_SAFE_TIME);
             set_restart(delay);
             break;
         }
@@ -487,13 +494,13 @@ void IotApplication::on_event([[maybe_unused]] void *args, esp_event_base_t base
 
     auto *self = static_cast<IotApplication *>(param);
 
+    iot_not_null(self);
+
     if (self == nullptr)
         esp_system_abort("Pointer to iot app is null, Did you forget to pass it as a param to the task ?");
 
     if (heap_caps_check_integrity_all(true) == false)
-    {
-        esp_system_abort("Heap FAILED checks!");
-    }
+        esp_system_abort("Heap checks has failed!");
 
     xSemaphoreGive(_task_lock);
 
