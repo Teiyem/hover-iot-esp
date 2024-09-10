@@ -96,12 +96,6 @@ void IotApplication::start(iot_app_cfg_t config)
         return;
     }
 
-    IotExecutor *executor  = &IotFactory::create_component<IotExecutor>();
-
-    ESP_ERROR_CHECK(executor->start());
-
-    _components.push_back(executor);
-
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IOT_EVENT, ESP_EVENT_ANY_ID, &on_event,
                                                         this, nullptr));
 
